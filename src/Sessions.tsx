@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, Folder, FolderOpen, LoaderCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Folder, FolderOpen, LoaderCircle, Pencil, Trash2 } from 'lucide-react';
 import { api, cloud, params, post } from './api';
 import { Sheet } from './Files';
 import { useRootNames } from './file-roots';
@@ -51,21 +51,27 @@ function DirectoryPicker({ value, choose, close }: { value: FileLocation; choose
   </Sheet>;
 }
 
-export function SessionActions({ conversation, deleted, close }: { conversation: Conversation; deleted: () => void; close: () => void }) {
+export function SessionActions({ conversation, updated, deleted, close }: { conversation: Conversation; updated: (value: Conversation) => void; deleted: () => void; close: () => void }) {
+  const [editing, setEditing] = useState(false), [title, setTitle] = useState(conversation.sessionTitle);
   const [confirm, setConfirm] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function remove() {
     setBusy(true); setError('');
     try { await api('/api/conversations/' + encodeURIComponent(conversation.sessionId), { method: 'DELETE' }); deleted(); }
     catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
-  return <Sheet title={confirm ? '确认删除会话' : '会话操作'} close={busy ? () => {} : close}>
+  async function rename() {
+    setBusy(true); setError('');
+    try { updated(await api<Conversation>('/api/conversations/' + encodeURIComponent(conversation.sessionId), { method: 'PUT', body: JSON.stringify({ title }) })); }
+    catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  }
+  return <Sheet title={editing ? '重命名会话' : confirm ? '确认删除会话' : '会话操作'} close={busy ? () => {} : close}>
     <h3>{conversation.sessionTitle}</h3><p className="muted">{conversation.projectDisplayName} · {conversation.provider === 'codex' ? 'Codex' : 'Claude Code'}</p>
-    {confirm ? <><p className="delete-explanation">这会删除这段会话及其对话记录。项目目录、代码和素材会保留。运行中的会话需要先停止。</p>{error && <div className="error-banner" role="alert">{error}</div>}<div className="session-confirm-actions"><button disabled={busy} onClick={() => setConfirm(false)}>取消</button><button className="primary danger-action" disabled={busy} onClick={() => void remove()}>{busy ? <LoaderCircle className="spin" size={17}/> : <Trash2 size={17}/>}确认删除</button></div></> : <div className="action-list"><button className="danger-text" onClick={() => setConfirm(true)}><Trash2 size={18}/>删除会话</button></div>}
+    {editing ? <form onSubmit={e => { e.preventDefault(); void rename(); }}><label className="field">会话名称<input aria-label="会话名称" value={title} maxLength={200} disabled={busy} onChange={e => setTitle(e.target.value)}/></label>{error && <div className="error-banner" role="alert">{error}</div>}<div className="interaction-actions"><button type="button" disabled={busy} onClick={() => setEditing(false)}>取消</button><button className="primary" disabled={busy || !title.trim()}>{busy ? '正在保存…' : '保存名称'}</button></div></form> : confirm ? <><p className="delete-explanation">这会删除这段会话及其对话记录。项目目录、代码和素材会保留。运行中的会话需要先停止。</p>{error && <div className="error-banner" role="alert">{error}</div>}<div className="session-confirm-actions"><button disabled={busy} onClick={() => setConfirm(false)}>取消</button><button className="primary danger-action" disabled={busy} onClick={() => void remove()}>{busy ? <LoaderCircle className="spin" size={17}/> : <Trash2 size={17}/>}确认删除</button></div></> : <div className="action-list"><button onClick={() => { setError(''); setEditing(true); }}><Pencil size={18}/>重命名会话</button><button className="danger-text" onClick={() => setConfirm(true)}><Trash2 size={18}/>删除会话</button></div>}
   </Sheet>;
 }
 
 export function useConversationPath(conversation: Conversation) {
   const [directory, setDirectory] = useState(conversation.projectPath ?? '');
-  useEffect(() => { let live = true; void cloud<{ project?: { fullPath?: string; path?: string } }>(`/providers/sessions/${conversation.sessionId}`).then(value => { if (live) setDirectory(value.project?.fullPath ?? value.project?.path ?? conversation.projectPath ?? ''); }).catch(() => {}); return () => { live = false; }; }, [conversation.sessionId]);
+  useEffect(() => { let live = true; void api<Conversation>(`/api/conversations/${conversation.sessionId}`).then(value => { if (live) setDirectory(value.projectPath ?? conversation.projectPath ?? ''); }).catch(() => {}); return () => { live = false; }; }, [conversation.sessionId]);
   return directory;
 }

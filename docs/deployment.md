@@ -93,3 +93,9 @@ Android versionCode8，保持包标识与签名。快捷命令保存在设备 lo
 主要修复在服务器网关，已安装的0.4.1 App也受益；部署后重新连接终端。升级包versionCode9保持同包名和签名。已有输入和历史不被自动清除。
 
 除了重连，还必须验证延迟设备响应：`STUDIO_SSH_TARGET=USER@HOST node scripts/check-terminal-negotiation.mjs` 会创建独立目录与会话，注入迟到的设备响应，验证服务器本机协商、旧客户端保护、shell PID/变量保留，最后清理。不要捕获用户已有窗格来调试。网关重启仍需先确认任务与代理空闲。
+
+## 0.4.3 对话界面与会话信息
+
+前后端一并更新；Android versionCode10，同包名、同签名。新会话查询/重命名 API需要新版网关。Codex 原有 sessions.json 增加可选名称字段，保留旧目录、线程与历史；无需迁移或重新登录。界面资源内置在 APK中，安装0.4.3才能获得新的对话布局。
+
+`STUDIO_SSH_TARGET=USER@HOST node scripts/check-chat-native.mjs` 在独立命名目录创建无推理的 Claude/Codex 会话，验证重命名、键盘、系统返回、用量入口和 Codex 缺失目录记录的恢复；最后只删除自己的会话、项目记录和空测试文件夹。不要使用已有用户会话做破坏性验收。

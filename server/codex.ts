@@ -5,14 +5,14 @@ import { createInterface } from 'node:readline';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { WebSocket } from 'ws';
-import { decodeEvent, type ChatEvent, type AgentModel } from '../shared/protocol.ts';
+import { decodeEvent, type ChatEvent, type AgentModel, type Conversation } from '../shared/protocol.ts';
 import { nativeImage, withFileReferences, type ResolvedAttachment } from './attachments.ts';
 import { validateModel } from './models.ts';
 import { HttpError } from './files.ts';
 import { appVersion } from '../shared/config.ts';
 import { codexAccount, unavailableUsage, type AccountUsage } from '../shared/usage.ts';
 
-type Session = { id: string; cwd: string; threadId?: string; turnId?: string; seq: number; processing: boolean; events: ChatEvent[] };
+type Session = { id: string; cwd: string; title?: string; projectDisplayName?: string; threadId?: string; turnId?: string; seq: number; processing: boolean; events: ChatEvent[] };
 type Approval = { rpcId: string | number; sessionId: string; event: ChatEvent; questions?: boolean };
 const rpcSchema = z.object({ id: z.union([z.string(), z.number()]).optional(), method: z.string().optional(), params: z.record(z.string(), z.unknown()).optional(), result: z.unknown().optional(), error: z.object({ message: z.string() }).passthrough().optional() });
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -40,9 +40,18 @@ export class CodexBridge {
     const file = path.join(this.directory, 'sessions.json');
     fs.writeFileSync(file + '.tmp', JSON.stringify([...this.sessions.values()].map(({ events, ...metadata }) => metadata)), { mode: 0o600 }); fs.renameSync(file + '.tmp', file);
   }
-  register(id: string, cwd: string) {
+  register(id: string, cwd: string, info?: { title: string; projectDisplayName: string }) {
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new HttpError(400, '无效会话编号');
-    this.sessions.set(id, { id, cwd, processing: false, seq: 0, events: [] }); this.persist();
+    this.sessions.set(id, { id, cwd, ...info, processing: false, seq: 0, events: [] }); this.persist();
+  }
+  resolveId(id: string) { return this.has(id) ? id : [...this.sessions.values()].find(value => value.threadId === id)?.id ?? id; }
+  info(id: string): Conversation | undefined {
+    const session = this.sessions.get(this.resolveId(id));
+    return session ? { sessionId: session.id, provider: 'codex', sessionTitle: session.title ?? 'Codex 会话', projectDisplayName: session.projectDisplayName ?? path.basename(session.cwd), projectPath: session.cwd, lastActivity: typeof session.events.at(-1)?.timestamp === 'string' ? String(session.events.at(-1)?.timestamp) : null } : undefined;
+  }
+  setInfo(id: string, title: string, projectDisplayName?: string) {
+    const session = this.sessions.get(id); if (!session) throw new HttpError(404, '会话不存在');
+    session.title = title; if (projectDisplayName) session.projectDisplayName = projectDisplayName; this.persist();
   }
   has(id: string) { return this.sessions.has(id); }
   async archive(id: string) {

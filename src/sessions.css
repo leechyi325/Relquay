@@ -19,3 +19,5 @@
 .danger-action{background:#a34e3b}
 .session-context-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%}
 .art-brand{width:75%;max-width:110px;aspect-ratio:1;align-self:center}
+
+.app-shell.has-chat{--nav-height:0px}.has-chat .chat-page{padding-bottom:env(safe-area-inset-bottom)}.has-chat .chat-heading{gap:6px}.has-chat .chat-heading>div{min-width:0;flex:1}.has-chat .chat-heading>button{flex-shrink:0}

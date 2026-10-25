@@ -27,6 +27,7 @@ import { CloudObserver } from './cloud-observer.ts';
 import { claudeTokens } from '../shared/usage.ts';
 import { decodeEvent } from '../shared/protocol.ts';
 import { TerminalNegotiation } from './terminal.ts';
+import { cloudConversation, conversationId, conversationRename } from './conversations.ts';
 
 const exec = promisify(execFile);
 type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions };
@@ -70,6 +71,20 @@ export function createStudio(config: Config) {
     const data = await response.json().catch(() => ({ error: '上游返回格式异常' }));
     if (!response.ok) throw new HttpError(response.status, typeof data.error === 'string' ? data.error : data.message ?? 'CloudCLI 请求失败');
     return data;
+  };
+  const conversation = async (value: string, token: string) => {
+    const id = codex.resolveId(conversationId.parse(value)), owned = codex.info(id);
+    if (owned && codex.sessions.get(id)?.title) return owned;
+    try {
+      const result = cloudConversation((await cloud('/providers/sessions/' + encodeURIComponent(id), token)).data);
+      if (owned) codex.setInfo(id, result.sessionTitle, result.projectDisplayName);
+      return owned ? { ...result, projectPath: owned.projectPath } : result;
+    } catch (error) {
+      if (owned) return owned;
+      if (error instanceof HttpError && [401, 403].includes(error.status)) throw new HttpError(error.status, '会话访问授权已失效，请重新登录工作台');
+      if (error instanceof HttpError && [404, 410].includes(error.status)) throw new HttpError(410, '对应会话已删除或归档，请从工作台选择其他会话');
+      throw new HttpError(502, '暂时无法打开会话，请稍后重试');
+    }
   };
   const getSession = (token?: string) => {
     const session = token ? sessions.get(token) : undefined;
@@ -168,8 +183,21 @@ export function createStudio(config: Config) {
     const result = await cloud('/providers/sessions', token, { method: 'POST', body: JSON.stringify({ provider: body.provider, projectPath, initialMessage: '' }) });
     const sessionId = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(result.data.sessionId), title = body.title || '新会话';
     await cloud(`/providers/sessions/${sessionId}`, token, { method: 'PUT', body: JSON.stringify({ summary: title }) });
-    if (body.provider === 'codex') codex.register(sessionId, projectPath);
+    if (body.provider === 'codex') codex.register(sessionId, projectPath, { title, projectDisplayName: body.projectName });
     res.status(201).json({ sessionId, provider: body.provider, projectDisplayName: body.projectName, projectPath, sessionTitle: title, lastActivity: new Date().toISOString() });
+  }));
+  app.get('/api/conversations/:id', asyncRoute(async (req, res) => {
+    res.set('Cache-Control', 'no-store'); res.json(await conversation(String(req.params.id), res.locals.session.cloudToken));
+  }));
+  app.put('/api/conversations/:id', asyncRoute(async (req, res) => {
+    const body = conversationRename.parse(req.body), token = res.locals.session.cloudToken;
+    const current = await conversation(String(req.params.id), token);
+    if (codex.has(current.sessionId)) {
+      // Owned Codex metadata remains usable when CloudCLI's catalog row is gone.
+      await cloud(`/providers/sessions/${current.sessionId}`, token, { method: 'PUT', body: JSON.stringify({ summary: body.title }) }).catch(() => {});
+      codex.setInfo(current.sessionId, body.title, current.projectDisplayName);
+    } else await cloud(`/providers/sessions/${current.sessionId}`, token, { method: 'PUT', body: JSON.stringify({ summary: body.title }) });
+    res.set('Cache-Control', 'no-store'); res.json({ ...current, sessionTitle: body.title });
   }));
   app.delete('/api/conversations/:id', asyncRoute(async (req, res) => {
     const id = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(req.params.id), token = res.locals.session.cloudToken;
@@ -177,7 +205,8 @@ export function createStudio(config: Config) {
     const running = await cloud('/providers/sessions/running', token);
     if (z.array(z.object({ sessionId: z.string() })).parse(running.data.sessions).some(value => value.sessionId === id)) throw new HttpError(409, '会话正在运行，请先停止后再删除');
     if (codex.has(id)) await codex.archive(id);
-    await cloud(`/providers/sessions/${id}?force=true&deletedFromDisk=true`, token, { method: 'DELETE' });
+    try { await cloud(`/providers/sessions/${id}?force=true&deletedFromDisk=true`, token, { method: 'DELETE' }); }
+    catch(error) { if (!codex.has(id) || !(error instanceof HttpError) || error.status !== 404) throw error; }
     if (codex.has(id)) codex.remove(id);
     res.json({ ok: true });
   }));
@@ -192,6 +221,13 @@ export function createStudio(config: Config) {
     const history = /^\/providers\/sessions\/([a-zA-Z0-9_-]+)\/messages/.exec(req.url);
     if (req.method === 'GET' && history && codex.has(history[1])) { res.json({ success: true, data: codex.history(history[1]) }); return; }
     const data = await cloud(req.url, res.locals.session.cloudToken, { method: req.method, ...(req.method === 'GET' ? {} : { body: JSON.stringify(req.body) }) });
+    if (req.method === 'GET' && req.path === '/providers/sessions/recent' && Array.isArray(data.data?.conversations)) {
+      data.data.conversations = data.data.conversations.map((item: { sessionId: string; sessionTitle?: string; projectDisplayName?: string }) => {
+        if (codex.has(item.sessionId) && !codex.sessions.get(item.sessionId)?.title && item.sessionTitle) codex.setInfo(item.sessionId, item.sessionTitle, item.projectDisplayName);
+        const owned = codex.info(item.sessionId);
+        return owned ? { ...item, sessionTitle: owned.sessionTitle, projectPath: owned.projectPath } : item;
+      });
+    }
     if (req.method === 'POST' && req.path === '/providers/sessions' && req.body.provider === 'codex') codex.register(data.data.sessionId, req.body.projectPath);
     res.json(data);
   }));

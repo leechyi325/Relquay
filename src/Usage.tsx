@@ -1,6 +1,6 @@
 import { quotaReset } from '../shared/time';
 import { useEffect, useState } from 'react';
-import { BarChart3, Clock3, LoaderCircle, RefreshCw, ChevronRight } from 'lucide-react';
+import { BarChart3, Clock3, LoaderCircle, RefreshCw } from 'lucide-react';
 import { api } from './api';
 import { Sheet } from './Files';
 import type { AccountUsage, TokenSnapshot } from '../shared/usage';
@@ -32,5 +32,5 @@ function TokenDetails({ snapshot }: { snapshot: TokenSnapshot }) {
 export function SessionTokenButton({ sessionId, changed }: { sessionId: string; changed: number }) {
   const [snapshot, setSnapshot] = useState<TokenSnapshot | null>(null), [open, setOpen] = useState(false);
   useEffect(() => { let live = true; void api<{ snapshot: TokenSnapshot | null }>('/api/usage/sessions/' + sessionId).then(data => { if (live) setSnapshot(data.snapshot); }).catch(() => {}); return () => { live = false; }; }, [sessionId, changed]);
-  return <><button className="session-token-button" aria-label="查看本会话 Token 与额度" onClick={() => setOpen(true)}><BarChart3 size={13}/><span>{snapshot ? `${tokenNumber(snapshot.totalTokens ?? snapshot.contextTokens)} Token${snapshot.scope === 'context' ? ' · 上下文' : ''}` : 'Token 与额度'}</span><ChevronRight size={12}/></button>{open && <UsagePanel sessionId={sessionId} close={() => setOpen(false)}/>}</>;
+  return <><button className="session-token-button" aria-label="查看本会话 Token 与额度" title={snapshot ? `${tokenNumber(snapshot.totalTokens ?? snapshot.contextTokens)} Token · 查看额度` : 'Token 与额度'} onClick={() => setOpen(true)}><BarChart3 size={19}/></button>{open && <UsagePanel sessionId={sessionId} close={() => setOpen(false)}/>}</>;
 }

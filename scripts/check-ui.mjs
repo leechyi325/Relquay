@@ -31,6 +31,7 @@ try {
   await page.getByRole('heading', { name: '工作，随时接续。' }).waitFor();
   await page.waitForTimeout(1200);
   await shot('android-workspace');
+  for (const group of await page.locator('.provider-card-group').all()) assert.ok(await group.evaluate(node => { const box = node.getBoundingClientRect(), button = node.querySelector('.provider-settings').getBoundingClientRect(); return Math.abs((box.top + box.bottom) / 2 - (button.top + button.bottom) / 2) < 1; }), 'Agent settings must be vertically centered');
   await page.getByRole('button', { name: '工作台设置', exact: true }).last().click();
   await page.getByRole('button', { name: '额度与 Token', exact: true }).click();
   const usage = page.getByRole('dialog', { name: '额度与 Token' });
@@ -218,7 +219,19 @@ try {
   await shot('new-session-location');
   await page.getByRole('button', { name: '创建会话' }).click();
   await page.getByRole('heading', { name: '这次，想完成什么？' }).waitFor();
+  assert.equal(await page.getByRole('navigation', { name: '主导航' }).count(), 0);
+  assert.equal(await page.locator('.composer-wrap .session-token-button').count(), 0);
+  assert.equal(await page.locator('.chat-heading .session-token-button').count(), 1);
   await shot('android-chat');
+  await page.getByLabel('给 AI 的消息').fill('重命名后保留草稿');
+  await page.getByRole('button', { name: '会话信息', exact: true }).click();
+  await page.getByRole('button', { name: '重命名 / 管理会话', exact: true }).click();
+  await page.getByRole('button', { name: '重命名会话', exact: true }).click();
+  await page.getByLabel('会话名称', { exact: true }).fill('随行对话');
+  await shot('chat-rename-session');
+  await page.getByRole('button', { name: '保存名称', exact: true }).click();
+  await page.getByRole('heading', { name: '随行对话', exact: true }).waitFor();
+  assert.equal(await page.getByLabel('给 AI 的消息').inputValue(), '重命名后保留草稿');
   await page.getByRole('button', { name: '模型与思考设置' }).click();
   await page.getByRole('group', { name: '选择模型', exact: true }).getByRole('button', { name: /Claude Test/ }).click();
   await page.getByRole('button', { name: '高', exact: true }).click();
@@ -261,6 +274,10 @@ try {
   await page.getByRole('dialog', { name: '提醒中心' }).getByRole('button', { name: '刷新提醒', exact: true }).click();
   await page.getByRole('dialog', { name: '提醒中心' }).getByText('Claude Code 本轮已完成', { exact: true }).first().waitFor();
   await shot('chat-notifications-resolved');
+  await page.getByRole('dialog', { name: '提醒中心' }).getByRole('button', { name: /Claude Code 本轮已完成/ }).first().click();
+  await page.getByRole('heading', { name: '随行对话', exact: true }).waitFor();
+  assert.equal(await page.getByRole('navigation', { name: '主导航' }).count(), 0);
+  await page.getByRole('button', { name: '打开提醒中心', exact: true }).click();
   await page.getByRole('button', { name: '全部已读', exact: true }).click();
   await page.getByRole('button', { name: '未读 0', exact: true }).waitFor();
   await page.getByRole('dialog', { name: '提醒中心' }).getByRole('button', { name: '关闭', exact: true }).click();
@@ -269,13 +286,19 @@ try {
 
   await page.getByRole('button', { name: '返回工作台' }).click();
   await page.reload();
-  await page.getByRole('button', { name: '会话操作 功能实现', exact: true }).waitFor();
+  await page.getByRole('button', { name: '会话操作 随行对话', exact: true }).waitFor();
   assert.ok(await page.getByText('Claude Code · 手机项目', { exact: true }).isVisible());
-  await page.getByRole('button', { name: '会话操作 功能实现', exact: true }).click();
+  await page.getByRole('button', { name: '会话操作 随行对话', exact: true }).click();
   await page.getByRole('button', { name: '删除会话', exact: true }).click();
   await shot('delete-session-confirm');
   await page.getByRole('button', { name: '确认删除', exact: true }).click();
-  await page.getByRole('button', { name: '会话操作 功能实现', exact: true }).waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: '会话操作 随行对话', exact: true }).waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: '打开提醒中心', exact: true }).click();
+  await page.getByRole('dialog', { name: '提醒中心' }).getByRole('button', { name: /Claude Code 本轮已完成/ }).first().click();
+  await page.getByRole('alert').filter({ hasText: '对应会话已删除或归档' }).waitFor();
+  await page.waitForFunction(() => { const box = document.querySelector('.sheet [role=alert]')?.getBoundingClientRect(); return box && box.top >= 0 && box.bottom <= innerHeight; });
+  await shot('notification-missing-conversation');
+  await page.getByRole('dialog', { name: '提醒中心' }).getByRole('button', { name: '关闭', exact: true }).click();
 
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '文件', exact: true }).click();
   await page.getByRole('button', { name: '管理模块', exact: true }).click();

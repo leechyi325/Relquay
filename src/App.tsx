@@ -79,15 +79,20 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers }: { 
     }); return () => cleanup?.();
   }, [current, tab]);
   async function openNotice(item: Notice) {
+    let targetConversation: Conversation | undefined;
+    let targetJobs: Job[] | undefined;
+    if (item.sessionId) targetConversation = await api<Conversation>('/api/conversations/' + encodeURIComponent(item.sessionId));
+    else if (item.jobId) {
+      targetJobs = await api<Job[]>('/api/jobs');
+      if (!targetJobs.some(job => job.id === item.jobId)) throw new Error('对应任务已删除，请查看其他提醒');
+    }
+    if (!alive.current) return;
+    await post(`/api/notifications/${item.id}/read`, {});
+    if (!alive.current) return;
     setNotifications(false); setSettings(false); setUsage(false); setNewSession(false); setSessionActions(undefined);
-    if (item.sessionId) {
-      const details = await cloud<{ sessionId: string; provider: Provider; sessionTitle?: string; summary?: string; project?: { displayName?: string; fullPath?: string }; projectPath?: string }>(`/providers/sessions/${encodeURIComponent(item.sessionId)}`);
-      if (!alive.current) return;
-      const known = conversations.find(value => value.sessionId === item.sessionId);
-      setCurrent(known ?? { sessionId: item.sessionId, provider: item.provider ?? details.provider, sessionTitle: details.sessionTitle ?? details.summary ?? '代理会话', projectDisplayName: details.project?.displayName ?? '服务器项目', projectPath: details.project?.fullPath ?? details.projectPath, lastActivity: null });
-      setTab('work');
-    } else if (item.jobId) { await refresh(); if (!alive.current) return; setJobTarget(item.jobId); setTab('jobs'); }
-    await post(`/api/notifications/${item.id}/read`, {}); if (alive.current) void inbox.refresh();
+    if (targetConversation) { setCurrent(targetConversation); setTab('work'); }
+    else if (targetJobs) { setJobs(targetJobs); setJobTarget(item.jobId); setTab('jobs'); }
+    void inbox.refresh();
   }
   const targetId = target?.origin === profile.origin ? target.eventId : undefined;
   useEffect(() => {
@@ -98,7 +103,7 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers }: { 
   function terminal(value: FileLocation) { setCwd(value); setTab('terminal'); }
   if (restoring) return <div className="launch"><img src="/brand.svg" alt="RoamDeck"/><span>正在连接工作台…</span></div>;
   if (!authenticated) return <Login profile={profile} manageServers={manageServers} done={() => setAuthenticated(true)}/>;
-  return <FileRootsProvider><div className="app-shell">
+  return <FileRootsProvider><div className={"app-shell" + (current && tab === "work" ? " has-chat" : "")}>
     <aside className="desktop-rail"><a className="wordmark" href="#" onClick={e => { e.preventDefault(); setCurrent(undefined); setTab('work'); }}><img src="/brand.svg" alt=""/><span>RoamDeck<small>随行台</small></span></a><div className="rail-label">你的工作空间</div><nav>{tabs.map(t => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}><t.icon size={20}/>{t.label}{t.id === 'jobs' && jobs.some(j => j.status === 'running') && <span className="dot green"/>}</button>)}</nav><div className="rail-project"><span className="eyebrow">CURRENT PROJECT</span><h3>远程工作区</h3><p>项目与任务，随处接续。</p><span><GitBranch size={13}/> 服务器工作区</span></div><button className="rail-settings" onClick={() => setSettings(true)}><Settings2 size={19}/>工作台设置</button></aside>
     <main className={'main-content ' + (current && tab === 'work' ? 'chat-main' : '')}>
       <header className="top-bar"><button className="mobile-brand" onClick={() => { setCurrent(undefined); setTab('work'); }}><img src="/brand.svg" alt=""/><span>RoamDeck</span></button><div className="desktop-breadcrumb">工作空间 <ChevronRight size={13}/> <strong>{current && tab === 'work' ? current.sessionTitle : tabs.find(t => t.id === tab)?.label}</strong></div><div className="top-actions"><button aria-label="切换服务器" onClick={manageServers} className={'connection-pill server-switch ' + (status?.cloudcli ? 'online' : '')}><span className="dot"/>{profile.name}<ChevronDown size={12}/></button><button className="icon-button inbox-button" aria-label="打开提醒中心" onClick={() => setNotifications(true)}><Bell size={19}/>{!!inbox.page?.unread && <i>{inbox.page.unread > 99 ? '99+' : inbox.page.unread}</i>}</button><button className="avatar-button" aria-label="工作台设置" onClick={() => setSettings(true)}>RD</button></div></header>
@@ -118,9 +123,9 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers }: { 
       {tab === 'files' && <FilesPage location={location} setLocation={setLocation} terminal={terminal} reference={entry => { setReference(entry); setTab('work'); if (!current) setNewSession(true); }} toast={toast}/>}
       {(terminalVisited || tab === 'terminal') && <div className="terminal-container" hidden={tab !== 'terminal'}><Terminal active={tab === 'terminal'} cwd={cwd} status={status} toast={toast}/></div>}
     </main>
-    <nav className="bottom-nav" aria-label="主导航">{tabs.map(t => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}><span><t.icon size={21} strokeWidth={tab === t.id ? 2 : 1.6}/>{t.id === 'jobs' && jobs.some(j => j.status === 'running') && <i/>}</span>{t.label}</button>)}</nav>
+    {!(current && tab === 'work') && <nav className="bottom-nav" aria-label="主导航">{tabs.map(t => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}><span><t.icon size={21} strokeWidth={tab === t.id ? 2 : 1.6}/>{t.id === 'jobs' && jobs.some(j => j.status === 'running') && <i/>}</span>{t.label}</button>)}</nav>}
     {newSession && <NewSession provider={provider} setProvider={setProvider} initialCwd={location} close={() => setNewSession(false)} created={session => { setCurrent(session); setConversations(list => [session, ...list]); setTab('work'); setNewSession(false); }}/>}
-    {sessionActions && <SessionActions conversation={sessionActions} close={() => setSessionActions(undefined)} deleted={() => { const id = sessionActions.sessionId; setSessionActions(undefined); setConversations(list => list.filter(item => item.sessionId !== id)); if (current?.sessionId === id) setCurrent(undefined); toast('会话已删除，项目文件已保留'); void refresh(); }}/>}
+    {sessionActions && <SessionActions conversation={sessionActions} updated={value => { setConversations(list => list.map(item => item.sessionId === value.sessionId ? value : item)); if (current?.sessionId === value.sessionId) setCurrent(value); setSessionActions(undefined); toast('会话名称已更新'); }} close={() => setSessionActions(undefined)} deleted={() => { const id = sessionActions.sessionId; setSessionActions(undefined); setConversations(list => list.filter(item => item.sessionId !== id)); if (current?.sessionId === id) setCurrent(undefined); toast('会话已删除，项目文件已保留'); void refresh(); }}/>}
     {usage && <UsagePanel close={() => setUsage(false)}/>}
     {notifications && <Notifications inbox={inbox} profiles={profiles} close={() => setNotifications(false)} open={openNotice} toast={toast}/>}
     {agentConfig && <AgentManager provider={agentConfig} close={() => setAgentConfig(undefined)} toast={toast}/>}

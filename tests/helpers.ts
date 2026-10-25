@@ -40,7 +40,7 @@ export async function fixture(port = 0) {
       if (!session) { res.statusCode = 404; res.end('{"error":"Session not found"}'); return; }
       if (req.method === 'DELETE') { catalog.delete(session.sessionId); res.end('{"success":true}'); return; }
       if (req.method === 'PUT') session.sessionTitle = String(body.summary);
-      res.end(JSON.stringify({ success: true, data: { ...session, project: { fullPath: session.projectPath } } })); return;
+      res.end(JSON.stringify({ success: true, data: { ...session, project: { fullPath: session.projectPath, displayName: projects.find(value => value.fullPath === session.projectPath)?.displayName } } })); return;
     }
     if (url.pathname.endsWith('/messages')) { res.end(JSON.stringify({ success: true, data: { messages: [] } })); return; }
     if (url.pathname.endsWith('/models')) { res.end(JSON.stringify({ success: true, data: { models: { DEFAULT: 'claude-test', OPTIONS: [{ value: 'claude-test', label: 'Claude Test', effort: { default: 'medium', values: [{ value: 'low' }, { value: 'medium' }, { value: 'high' }] } }, { value: 'claude-fast', label: 'Claude Fast' }] } } })); return; }
