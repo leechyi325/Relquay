@@ -18,6 +18,8 @@ await mkdir('artifacts', { recursive: true });
 try {
   const page = await browser.newPage({ viewport: { width: 393, height: 852 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   page.on('pageerror', e => errors.push(e.message));
+  const terminalInits = [];
+  page.on('websocket', ws => { if (ws.url().includes('/ws/terminal')) ws.on('framesent', frame => { const input = JSON.parse(String(frame.payload)); if (input.type === 'init') terminalInits.push(input); }); });
   const frames = [], chatSockets = [];
   page.on('websocket', ws => { if (ws.url().includes('/ws/chat')) { const item = { closed: false }; chatSockets.push(item); ws.on('close', () => item.closed = true); ws.on('framesent', frame => { try { frames.push(JSON.parse(String(frame.payload))); } catch {} }); } });
   await page.goto(base);
@@ -145,10 +147,39 @@ try {
   assert.ok(inset >= 13, 'Terminal output needs comfortable padding');
   await page.getByRole('button', { name: '选择与复制终端输出' }).click();
   await page.getByLabel('可复制的终端输出').waitFor();
+  const copied = await page.getByLabel('可复制的终端输出').inputValue();
+  assert.ok(copied.includes('WRAP_' + 'a'.repeat(160) + '_END'), 'Copy inserted soft-wrap newlines');
+  assert.ok(copied.includes('中文_' + '中'.repeat(63) + '_结束'), 'Copy added wide-character wrap padding');
+  assert.ok(copied.includes('HARD_LINE_ONE\nHARD_LINE_TWO'), 'Copy removed real line breaks');
   await shot('terminal-touch-copy');
   await page.getByRole('dialog', { name: '复制终端输出' }).getByRole('button', { name: '关闭', exact: true }).click();
   let terminalConnections = 0;
   page.on('websocket', ws => { if (ws.url().includes('/ws/terminal')) terminalConnections++; });
+  await page.getByLabel('命令编辑器，支持粘贴与多行输入').fill('draft-survives-tabs');
+  for (const name of ['文件', '任务', '工作台']) {
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name, exact: true }).click();
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '终端', exact: true }).click();
+  }
+  assert.equal(await page.getByLabel('命令编辑器，支持粘贴与多行输入').inputValue(), 'draft-survives-tabs');
+  await page.getByRole('button', { name: '终端工具', exact: true }).click();
+  await page.getByRole('button', { name: '添加快捷命令', exact: true }).click();
+  await page.getByLabel('快捷命令名称').fill('我的检查');
+  await page.getByLabel('快捷命令内容').fill('pwd\nfree -h');
+  await shot('terminal-custom-command');
+  await page.getByRole('button', { name: '保存命令', exact: true }).click();
+  await page.getByRole('button', { name: '编辑快捷命令 我的检查', exact: true }).click();
+  await page.getByLabel('快捷命令名称').fill('自定义检查');
+  await page.getByRole('button', { name: '保存命令', exact: true }).click();
+  await page.getByRole('button', { name: /自定义检查 pwd/ }).click();
+  assert.equal(await page.getByLabel('命令编辑器，支持粘贴与多行输入').inputValue(), 'pwd\nfree -h');
+  await page.getByRole('button', { name: '终端工具', exact: true }).click();
+  await page.getByRole('button', { name: '编辑快捷命令 自定义检查', exact: true }).click();
+  await page.getByRole('button', { name: '删除命令', exact: true }).click();
+  await page.getByRole('button', { name: '确认删除', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: '编辑快捷命令 自定义检查', exact: true }).count(), 0);
+  await page.getByRole('dialog', { name: '终端工具', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+  assert.equal(terminalInits.length, 1, 'Tab changes recreated the terminal');
+  assert.equal(terminalInits[0].forceRestart, true, 'Fresh tmux attachment must avoid raw query replay');
   for (const cols of ['80', '120']) {
     await page.getByRole('button', { name: '终端工具', exact: true }).click();
     await page.getByLabel('终端宽度', { exact: true }).selectOption(cols);

@@ -48,6 +48,29 @@ try {
     throw new Error('Server tmux dimensions did not match the client after layout settled');
   };
   const initial = await verifySize();
+  await run('ROAMDECK_NATIVE_STATE=preserved');
+  await page.getByLabel('命令编辑器，支持粘贴与多行输入').fill('native draft');
+  for (const name of ['文件', '任务', '工作台']) {
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name, exact: true }).click();
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '终端', exact: true }).click();
+  }
+  assert.equal(await page.getByLabel('命令编辑器，支持粘贴与多行输入').inputValue(), 'native draft');
+  assert.equal(initCount, 1, 'Tab changes reconnected the terminal');
+  const beforePid = (await exec('ssh', ['-o', 'BatchMode=yes', sshTarget, `tmux display-message -p -t ${sessionId} '#{pane_pid}'`])).stdout.trim();
+  await page.getByRole('button', { name: '终端工具', exact: true }).click();
+  await page.getByRole('button', { name: '重新连接终端', exact: true }).click();
+  await until(() => initCount === 2); await page.getByText('已连接', { exact: true }).waitFor(); await page.waitForTimeout(900);
+  const afterPid = (await exec('ssh', ['-o', 'BatchMode=yes', sshTarget, `tmux display-message -p -t ${sessionId} '#{pane_pid}'`])).stdout.trim();
+  assert.equal(afterPid, beforePid, 'Reconnect replaced the tmux shell');
+  await run("printf '\\n<%s>\\n' \"$ROAMDECK_NATIVE_STATE\"");
+  await run("printf '\\n%s\\n' 'NATIVE_WRAP_" + 'x'.repeat(160) + "_END'");
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: '选择与复制终端输出', exact: true }).click();
+  const snapshot = await page.getByLabel('可复制的终端输出', { exact: true }).inputValue();
+  assert.ok(snapshot.includes('NATIVE_WRAP_' + 'x'.repeat(160) + '_END'), 'Native copy retained soft-wrap newlines');
+  assert.ok(snapshot.includes('<preserved>'), 'Shell state did not survive reconnect');
+  assert.ok(!snapshot.includes('0;276;0c'), 'Device response leaked into terminal');
+  await page.getByRole('dialog', { name: '复制终端输出', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
   const fits = async () => { const result = await page.evaluate(() => { const screen = document.querySelector('.xterm-screen').getBoundingClientRect(), viewport = document.querySelector('.terminal-scroll').getBoundingClientRect(); return screen.right <= viewport.right + 1; }); assert.equal(result, true, 'Rightmost terminal column is clipped'); };
   await fits();
   const padding = await page.evaluate(() => { const screen = document.querySelector('.xterm-screen').getBoundingClientRect(), viewport = document.querySelector('.terminal-scroll').getBoundingClientRect(); return screen.left - viewport.left; });
@@ -96,10 +119,10 @@ try {
   await device.shell('settings put system user_rotation 0');
   await until(() => page.evaluate(() => innerHeight > innerWidth));
   await page.waitForTimeout(400); await fits();
-  assert.equal(initCount, 1, 'Changing display modes restarted the terminal');
+  assert.equal(initCount, 2, 'Changing display modes restarted the terminal');
   await page.getByRole('button', { name: '命令编辑器', exact: false }).click();
   await run('exit');
-  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['display tools sheet and collapsed extended keys', '14px output inset', 'touch selectable output contains real marker', 'system clipboard write succeeds', 'server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'one PTY init across mode changes'], realPhoneTested: false };
+  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['display tools sheet and collapsed extended keys', '14px output inset', 'touch selectable output contains real marker', 'system clipboard write succeeds', 'server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'tab navigation retains connection and draft', 'explicit reconnect preserves shell PID and variable', 'no device-response garbage', 'copy restores a 160-character wrapped line', 'one initial attach plus one explicit reconnect; display changes never reattach'], realPhoneTested: false };
   await writeFile('artifacts/terminal-revision-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
   await device.shell('settings put system user_rotation 0').catch(() => {});

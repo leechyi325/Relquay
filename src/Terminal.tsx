@@ -5,10 +5,12 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CornerDownLeft, Maximize2, Minimize2, Minus, Play, Plus, RefreshCw, SquareTerminal, Copy, Settings2, Keyboard } from 'lucide-react';
 import { socket, openExternal, post, origin } from './api';
 import { Sheet } from './Files';
+import { TerminalCommands } from './TerminalCommands';
+import { terminalText, commandHistory } from '../shared/terminal';
 import { useFileModules } from './file-roots';
 import type { FileLocation, ServerStatus } from '../shared/protocol';
 import '@xterm/xterm/css/xterm.css';
-export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: ServerStatus; toast: (s: string) => void }) {
+export function Terminal({ active, cwd, status, toast }: { active: boolean; cwd: FileLocation; status?: ServerStatus; toast: (s: string) => void }) {
   const { roots } = useFileModules();
   const effectiveRoot = roots.some(root => root.id === cwd.root) ? cwd.root : roots[0]?.id ?? cwd.root;
   const host = useRef<HTMLDivElement>(null), viewport = useRef<HTMLDivElement>(null), term = useRef<XTerm>(null), connection = useRef<WebSocket>(null);
@@ -17,10 +19,11 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
   const [mode, setMode] = useState('fit'), [fontSize, setFontSize] = useState(12), [fullscreen, setFullscreen] = useState(false), [editor, setEditor] = useState(true);
   const [dimensions, setDimensions] = useState({ cols: 0, rows: 0 }), [pan, setPan] = useState({ value: 0, max: 0 });
   const ctrl = useRef(false), [control, setControl] = useState(false), [ready, setReady] = useState(false), [command, setCommand] = useState(''), [reconnect, setReconnect] = useState(0);
-  const [history, setHistory] = useState<string[]>(() => JSON.parse(localStorage.getItem('studio.commands:' + origin) ?? '[]'));
+  const [history, setHistory] = useState<string[]>(() => commandHistory(localStorage.getItem('studio.commands:' + origin)));
   const write = (data: string) => { if (connection.current?.readyState === WebSocket.OPEN) connection.current.send(JSON.stringify({ type: 'input', data })); else toast('终端尚未连接'); };
   useEffect(() => {
     if (!host.current || !viewport.current || !status) return;
+    setReady(false);
     const surface = host.current, scroller = viewport.current;
     let disposed = false, timer: ReturnType<typeof setTimeout>, delay = 1000, frame = 0;
     const terminal = new XTerm({ fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace', fontSize: 12, lineHeight: 1.3, cursorBlink: true, scrollback: 5000, theme: { background: '#142833', foreground: '#e5e4da', cursor: '#dfae80', selectionBackground: '#506876' }, allowProposedApi: false });
@@ -79,11 +82,12 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
           const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
           const rc = resolved.terminalRc;
           const shell = `bash --rcfile ${quote(rc)} -i`;
-          ws.send(JSON.stringify({ type: 'init', projectPath, sessionId: session, provider: 'plain-shell', isPlainShell: true, initialCommand: `tmux new-session -A -s ${session} -c ${quote(projectPath)} ${quote(shell)} \\; set-option -t ${session} status off \\; set-window-option -t ${session} window-size latest`, cols: terminal.cols, rows: terminal.rows, colorScheme: 'dark' }));
+          // Recreate only CloudCLI's tmux attachment, never replay its old capability queries.
+          ws.send(JSON.stringify({ type: 'init', projectPath, sessionId: session, provider: 'plain-shell', isPlainShell: true, forceRestart: true, initialCommand: `tmux new-session -A -s ${session} -c ${quote(projectPath)} ${quote(shell)} \\; set-option -t ${session} status off \\; set-window-option -t ${session} window-size latest`, cols: terminal.cols, rows: terminal.rows, colorScheme: 'dark' }));
           } catch(e) { if (!disposed) toast(String(e)); ws.close(); }
         };
-        ws.onmessage = e => { try { const value = JSON.parse(e.data); if (value.type === 'output') { terminal.write(value.data); setReady(true); } } catch {} };
-        ws.onclose = () => { setReady(false); if (!disposed) { timer = setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); } };
+        ws.onmessage = e => { if (disposed) return; try { const value = JSON.parse(e.data); if (value.type === 'output') { terminal.write(value.data); setReady(true); } } catch {} };
+        ws.onclose = () => { if (!disposed) { setReady(false); timer = setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); } };
         ws.onerror = () => ws.close();
       } catch(e) { if (!disposed) { timer = setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); } }
     };
@@ -94,6 +98,10 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
       scroller.removeEventListener('touchstart', touchStart, true); scroller.removeEventListener('touchmove', touchMove, true); terminal.dispose(); term.current = null;
     };
   }, [effectiveRoot, cwd.root, cwd.path, status?.projectPath, reconnect]);
+  useEffect(() => {
+    if (active) resize.current();
+    else { setTools(false); setCopyText(undefined); setFullscreen(false); ctrl.current = false; setControl(false); term.current?.blur(); }
+  }, [active]);
   useEffect(() => { width.current = mode; size.current = fontSize; resize.current(); }, [mode, fontSize, fullscreen, editor, keys]);
   useEffect(() => {
     if (!fullscreen) return;
@@ -110,8 +118,8 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
   return <div className={'terminal-page ' + (fullscreen ? 'is-fullscreen' : '')}>
     <div className="section-heading"><div><span className="eyebrow">SERVER TERMINAL</span><h1>随手掌控。</h1></div></div>
     <p className="muted terminal-intro">命令、输出，随手接续。</p>
-    <div className="terminal-controls terminal-utility"><span className="terminal-dimensions" aria-label="终端尺寸">{dimensions.cols} × {dimensions.rows}</span><button className="icon-button" title="复制输出" aria-label="选择与复制终端输出" onClick={() => { const terminal = term.current; if (!terminal) return; const buffer = terminal.buffer.active; setCopyText(terminal.getSelection() || Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '').join('\n').trimEnd()); }}><Copy size={18}/></button><button className="icon-button" title="切换全屏" aria-label={fullscreen ? '退出终端全屏' : '终端全屏'} onClick={() => { setFullscreen(!fullscreen); setEditor(fullscreen); }}>{fullscreen ? <Minimize2 size={17}/> : <Maximize2 size={17}/>}</button><button className="icon-button" aria-label="终端工具" title="终端工具" onClick={() => setTools(true)}><Settings2 size={18}/></button></div>
-    {tools && <Sheet title="终端工具" close={() => setTools(false)}><div className="terminal-display-settings"><label className="field">显示宽度<select aria-label="终端宽度" value={mode} onChange={e => setMode(e.target.value)}><option value="fit">适应屏宽</option><option value="80">80 列</option><option value="120">120 列</option></select></label><div className="terminal-font-setting"><span>字号</span><button className="icon-button" aria-label="缩小终端字号" disabled={fontSize <= 9} onClick={() => setFontSize(v => v - 1)}><Minus size={16}/></button><strong>{fontSize}</strong><button className="icon-button" aria-label="增大终端字号" disabled={fontSize >= 20} onClick={() => setFontSize(v => v + 1)}><Plus size={16}/></button></div></div><div className="action-list"><button onClick={() => { setTools(false); setReconnect(v => v + 1); }}><RefreshCw size={18}/>重新连接终端</button>{[['当前目录', 'pwd'], ['磁盘空间', 'df -h'], ['内存', 'free -h'], ['登录 Codex', 'codex login --device-auth'], ['登录 Claude', 'claude auth login']].map(([label, text]) => <button key={label} disabled={!ready} onClick={() => { setTools(false); run(text); }}><SquareTerminal size={18}/>{label}</button>)}</div></Sheet>}
+    <div className="terminal-controls terminal-utility"><span className="terminal-dimensions" aria-label="终端尺寸">{dimensions.cols} × {dimensions.rows}</span><button className="icon-button" title="复制输出" aria-label="选择与复制终端输出" onClick={() => { const terminal = term.current; if (!terminal) return; setCopyText(terminal.getSelection() || terminalText(terminal.buffer.active, terminal.cols)); }}><Copy size={18}/></button><button className="icon-button" title="切换全屏" aria-label={fullscreen ? '退出终端全屏' : '终端全屏'} onClick={() => { setFullscreen(!fullscreen); setEditor(fullscreen); }}>{fullscreen ? <Minimize2 size={17}/> : <Maximize2 size={17}/>}</button><button className="icon-button" aria-label="终端工具" title="终端工具" onClick={() => setTools(true)}><Settings2 size={18}/></button></div>
+    {tools && <Sheet title="终端工具" close={() => setTools(false)}><div className="terminal-display-settings"><label className="field">显示宽度<select aria-label="终端宽度" value={mode} onChange={e => setMode(e.target.value)}><option value="fit">适应屏宽</option><option value="80">80 列</option><option value="120">120 列</option></select></label><div className="terminal-font-setting"><span>字号</span><button className="icon-button" aria-label="缩小终端字号" disabled={fontSize <= 9} onClick={() => setFontSize(v => v - 1)}><Minus size={16}/></button><strong>{fontSize}</strong><button className="icon-button" aria-label="增大终端字号" disabled={fontSize >= 20} onClick={() => setFontSize(v => v + 1)}><Plus size={16}/></button></div></div><div className="action-list"><button onClick={() => { setTools(false); setReconnect(v => v + 1); }}><RefreshCw size={18}/>重新连接终端</button></div><TerminalCommands toast={toast} choose={text => { setTools(false); setCommand(text); setEditor(true); }}/></Sheet>}
     <section className="terminal-card"><header><span className={'dot ' + (ready ? 'green' : '')}/><span>ubuntu · {cwd.root}{cwd.path ? '/' + cwd.path : ''}</span><span className="terminal-badge">{ready ? '已连接' : '正在连接'}</span></header><div className="terminal-scroll" ref={viewport} onScroll={e => setPan({ value: e.currentTarget.scrollLeft, max: Math.max(0, e.currentTarget.scrollWidth - e.currentTarget.clientWidth) })}><div ref={host} className="terminal-screen"/></div>
       {mode !== 'fit' && pan.max > 0 && <label className="terminal-pan"><span>左右查看</span><input aria-label="终端横向位置" type="range" min={0} max={pan.max} value={pan.value} onChange={e => { if (viewport.current) viewport.current.scrollLeft = Number(e.target.value); }}/><span>{Math.round(pan.value / pan.max * 100)}%</span></label>}
       <div className="key-bar">{[['Esc', '\u001b'], ['Tab', '\t'], ['中断', '\u0003']].map(([label, data]) => <button key={label} onClick={() => { write(data); term.current?.focus(); }}>{label}</button>)}<button className="key-expand" aria-label="扩展终端按键" aria-expanded={keys} onClick={() => { if (keys) { ctrl.current = false; setControl(false); } setKeys(!keys); }}><Keyboard size={16}/></button></div>{keys && <div className="key-bar extended-keys"><button className={control ? 'selected' : ''} onClick={() => { ctrl.current = !ctrl.current; setControl(ctrl.current); term.current?.focus(); }}>Ctrl</button>{[[ArrowLeft, '\u001b[D'], [ArrowDown, '\u001b[B'], [ArrowUp, '\u001b[A'], [ArrowRight, '\u001b[C']].map(([Icon, data], i) => { const KeyIcon = Icon as typeof ArrowUp; return <button key={i} aria-label={['向左', '向下', '向上', '向右'][i]} onClick={() => write(data as string)}><KeyIcon size={16}/></button>; })}<button aria-label="回车" onClick={() => write('\r')}><CornerDownLeft size={16}/></button></div>}

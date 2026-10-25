@@ -79,3 +79,11 @@ Skills 默认写入服务用户 ~/.agents/skills（Codex）或 ~/.claude/skills�
 插件管理调用 PATH 中固定的 codex/claude 命令，默认在服务用户 home 中运行；服务必须具备正常的 CLI、市场配置及所需账号权限。只设置用户级插件，不覆盖项目级配置。支持 CODEX_HOME / CLAUDE_CONFIG_DIR；配置变更不会自动终止已有轮次。
 
 可在服务运行环境执行 `node --import tsx scripts/check-extension-cli.mjs` 验证 CLI 兼容性。该脚本使用临时 CLI 配置目录与空测试插件，结束后清理，不修改正式账号目录。
+
+## 0.4.1 终端升级
+
+Android versionCode8，保持包标识与签名。快捷命令保存在设备 localStorage，按服务器 origin 隔离，随卸载或清除应用数据移除。旧命令历史保留；本次无服务器状态迁移。
+
+实际断线重连会替换 CloudCLI 的 tmux 附着客户端，原 shell 与进程继续运行。不要把 `forceRestart` 改成终止 tmux 会话。可设置 `STUDIO_SSH_TARGET` 后运行 `node scripts/check-terminal-replay.mjs`，只创建并清理独立测试会话，验证旧重播故障与新附着路径。Android 回归使用同一变量运行 `scripts/check-terminal-native.mjs`。
+
+服务器构建建议 `vite build --outDir .runtime/release-dist`，检查后发布静态文件；不要让默认清空 dist 的构建删除已发布的 `dist/downloads/`。实例的 shared/config.json、私有状态和凭据不从公共仓库覆盖。

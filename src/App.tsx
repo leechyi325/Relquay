@@ -36,10 +36,12 @@ export function App() {
   return <><Workspace key={store.active.id + store.active.origin} profile={store.active} profiles={store.profiles} target={target} clearTarget={() => setTarget(undefined)} manageServers={() => setServers(true)}/>{servers && <Servers store={store} close={() => setServers(false)}/>}</>;
 }
 function Workspace({ profile, profiles, target, clearTarget, manageServers }: { profile: ServerProfile; profiles: ServerProfile[]; target?: NoticeTarget; clearTarget: () => void; manageServers: () => void }) {
+  const [terminalVisited, setTerminalVisited] = useState(false);
   const [sessionActions, setSessionActions] = useState<Conversation>();
   const [agentConfig, setAgentConfig] = useState<Provider>();
   const [authenticated, setAuthenticated] = useState(false), [restoring, setRestoring] = useState(true), [tab, setTab] = useState<Tab>('work'), [status, setStatus] = useState<ServerStatus>(), [conversations, setConversations] = useState<Conversation[]>([]), [jobs, setJobs] = useState<Job[]>([]), [current, setCurrent] = useState<Conversation>(), [provider, setProvider] = useState<Provider>('claude'), [location, setLocation] = useState<FileLocation>({ root: 'project', path: '' }), [cwd, setCwd] = useState<FileLocation>({ root: 'project', path: '' }), [settings, setSettings] = useState(false), [newSession, setNewSession] = useState(false), [notice, setNotice] = useState(''), [error, setError] = useState(''), [reference, setReference] = useState<FileEntry>(), [refreshing, setRefreshing] = useState(false);
   const [usage, setUsage] = useState(false), [notifications, setNotifications] = useState(false), [jobTarget, setJobTarget] = useState<string>();
+  useEffect(() => { if (tab === 'terminal') setTerminalVisited(true); }, [tab]);
   const inbox = useInbox(authenticated);
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -114,7 +116,7 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers }: { 
       </div>)}
       {tab === 'jobs' && <JobsPage target={jobTarget} clearTarget={() => setJobTarget(undefined)} jobs={jobs} refresh={refresh} toast={toast} openOutputs={() => { void api<{ id: string }[]>('/api/roots').then(roots => { setLocation({ root: roots.find(root => root.id === 'outputs')?.id ?? roots[0].id, path: '' }); setTab('files'); }).catch(e => toast(String(e))); }}/>}
       {tab === 'files' && <FilesPage location={location} setLocation={setLocation} terminal={terminal} reference={entry => { setReference(entry); setTab('work'); if (!current) setNewSession(true); }} toast={toast}/>}
-      {tab === 'terminal' && <Terminal cwd={cwd} status={status} toast={toast}/>}
+      {(terminalVisited || tab === 'terminal') && <div className="terminal-container" hidden={tab !== 'terminal'}><Terminal active={tab === 'terminal'} cwd={cwd} status={status} toast={toast}/></div>}
     </main>
     <nav className="bottom-nav" aria-label="主导航">{tabs.map(t => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}><span><t.icon size={21} strokeWidth={tab === t.id ? 2 : 1.6}/>{t.id === 'jobs' && jobs.some(j => j.status === 'running') && <i/>}</span>{t.label}</button>)}</nav>
     {newSession && <NewSession provider={provider} setProvider={setProvider} initialCwd={location} close={() => setNewSession(false)} created={session => { setCurrent(session); setConversations(list => [session, ...list]); setTab('work'); setNewSession(false); }}/>}

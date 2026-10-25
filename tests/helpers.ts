@@ -67,7 +67,9 @@ export async function fixture(port = 0) {
     } else if (input.type === 'chat.permission-response') {
       const sessionId = [...replay].find(([, events]) => events.some(event => event.requestId === input.requestId))?.[0];
       if (sessionId) { publish(sessionId, { kind: 'permission_resolved', requestId: input.requestId }); publish(sessionId, { kind: 'complete' }); }
-    } else client.send(value.toString());
+    } else if (input.type === 'init') client.send(JSON.stringify({ type: 'output', data: 'TERMINAL_READY\r\n' + 'WRAP_' + 'a'.repeat(160) + '_END\r\n中文_' + '中'.repeat(63) + '_结束\r\nHARD_LINE_ONE\r\nHARD_LINE_TWO\r\n' }));
+    else if (input.type === 'input') client.send(JSON.stringify({ type: 'output', data: input.data }));
+    else client.send(value.toString());
   }); });
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
   const address = upstream.address() as { port: number };
