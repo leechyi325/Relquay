@@ -1,5 +1,7 @@
 # RoamDeck · 随行台
 
+[![CI](https://github.com/leechyi325/RoamDeck/actions/workflows/ci.yml/badge.svg)](https://github.com/leechyi325/RoamDeck/actions/workflows/ci.yml)
+
 **手机上的远程 AI 工作台。** 把 Claude Code / Codex、项目、终端、文件和后台任务放在同一个入口；客户端支持 Android 手机、平板和浏览器，代理与任务在自己的服务器上运行。
 
 Roam 表示随处使用，Deck 表示集中操作的工作台。适用于软件开发、脚本自动化、服务器运维、文档处理和其他需要远程执行的工作。
@@ -68,14 +70,9 @@ npm run android:build
 
 应用标识目前保留 `xyz.leechyi.compileverse`，用于兼容已有安装与 Keystore；显示名称为 RoamDeck。正式分发的签名、标识和商店发布需另行配置。
 
-## 当前实例
+## 部署自己的服务器
 
-- 网页：<https://safe.leechyi.xyz:28443>
-- Android：<https://safe.leechyi.xyz:28443/downloads/roamdeck-0.3.0.apk>
-- 工作台账号：`ubuntu`；密码在本机受保护的 `private/access.json`，不在仓库中。
-- 可覆盖升级此前版本，保留登录信息。进入「终端」完成 Codex / Claude 的本人账号授权，再创建会话。
-
-当前部署沿用原服务目录和 systemd 名称，迁移与证书说明见 [deployment.md](docs/deployment.md)。
+每个使用者在自己的服务器部署 RoamDeck，并在登录页添加服务器地址。HTTPS 域名、账号、TLS 证书、AI 登录状态和项目数据都由服务器所有者管理。通用部署要求与升级步骤见 [deployment.md](docs/deployment.md)；仓库不提供公共演示账号或预置服务器。
 
 手机顶部服务器名称和登录页服务器按钮可打开服务器列表。每台服务器需要独立部署 RoamDeck、单独登录；配置仅保存在本机，切换保留服务器上的任务。
 
@@ -93,7 +90,7 @@ npm run android:build
 
 已有真实服务器和 Android 16 ARM64 模拟器验证。当前尚未提供独立 Git 图形界面，Git 可通过终端使用；部分高级交互表单需要终端处理。网页提供提醒收件箱；Android App 可主动开启后台系统提醒。个人手机的兼容性和真实模型工作流仍需要使用者复核。
 
-本仓库尚未选择开源许可证，也未配置远程仓库；当前为独立本地 Git 仓库。
+本仓库当前未附带开源许可证。公开可见不代表授予复制、修改或再分发许可；如需开源分发，请先为项目选择合适的许可证。
 
 
 ## 额度、Token 与 Android 提醒（0.3）

@@ -5,6 +5,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
 const credentials = JSON.parse(await readFile('private/access.json', 'utf8'));
+const sshTarget = process.env.STUDIO_SSH_TARGET;
+if (!sshTarget) throw new Error('Set STUDIO_SSH_TARGET to the SSH user and host for the test server');
 const device = (await _android.devices()).find(value => value.serial() === 'emulator-5554');
 if (!device) throw new Error('Isolated emulator is not running');
 const directory = '终端验收-' + Date.now();
@@ -38,7 +40,7 @@ try {
     for (let attempt = 0; attempt < 8; attempt++) {
       await page.waitForTimeout(150);
       const value = await dimensions();
-      const { stdout } = await exec('ssh', ['-o', 'BatchMode=yes', 'ubuntu@safe.leechyi.xyz', `tmux display-message -p -t ${sessionId} '#{pane_width} #{pane_height}'`]);
+      const { stdout } = await exec('ssh', ['-o', 'BatchMode=yes', sshTarget, `tmux display-message -p -t ${sessionId} '#{pane_width} #{pane_height}'`]);
       const [cols, rows] = stdout.trim().split(' ').map(Number);
       if (cols === value.cols && rows === value.rows) return value;
     }

@@ -25,14 +25,14 @@ try {
   await page.getByRole('heading', { name: '工作，随时接续。' }).waitFor({ timeout: 25000 });
   await page.waitForTimeout(1500);
   await device.screenshot({ path: 'artifacts/native-workspace.png' });
-  const protectedToken = await page.evaluate(async () => (await window.Capacitor.Plugins.StudioCredentials.get({ key: localStorage.getItem('studio.origin') ?? 'https://safe.leechyi.xyz:28443' })).token);
+  const protectedToken = await page.evaluate(async () => (await window.Capacitor.Plugins.StudioCredentials.get({ key: localStorage.getItem('studio.origin') ?? 'https://workspace.example.com:28443' })).token);
   assert.ok(protectedToken?.length > 20, 'Native Keystore did not retain the token');
   assert.equal(await page.evaluate(() => sessionStorage.getItem('studio.token')), null);
   const prefs = execFileSync(adb, ['-s', 'emulator-5554', 'shell', 'run-as', 'xyz.leechyi.compileverse', 'cat', 'shared_prefs/studio_credentials.xml'], { encoding: 'utf8' });
   assert.ok(!prefs.includes(protectedToken), 'Token appeared in plaintext Android preferences');
   assert.match(prefs, /name="data:/);
   await page.evaluate(async () => { const plugin = window.Capacitor.Plugins.StudioCredentials; const key = 'https://isolation-test.invalid'; await plugin.set({ key, token: 'isolation-fixture-token-only' }); const value = await plugin.get({ key }); if (value.token !== 'isolation-fixture-token-only') throw new Error('Scoped token missing'); await plugin.clear({ key }); });
-  const retained = await page.evaluate(async () => (await window.Capacitor.Plugins.StudioCredentials.get({ key: localStorage.getItem('studio.origin') ?? 'https://safe.leechyi.xyz:28443' })).token);
+  const retained = await page.evaluate(async () => (await window.Capacitor.Plugins.StudioCredentials.get({ key: localStorage.getItem('studio.origin') ?? 'https://workspace.example.com:28443' })).token);
   assert.equal(retained, protectedToken, 'Removing another server cleared the active server login');
   const navigation = () => page.getByRole('navigation', { name: '主导航' });
   const filesResponse = page.waitForResponse(response => response.url().includes('/api/files?root=project') && response.request().method() === 'GET');
