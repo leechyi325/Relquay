@@ -5,6 +5,8 @@ createInterface({ input: process.stdin }).on('line', line => {
   const frame = JSON.parse(line);
   if (process.argv[2]) appendFileSync(process.argv[2], JSON.stringify(frame) + '\n');
   if (frame.method === 'initialize') send({ id: frame.id, result: {} });
+  if (frame.method === 'account/rateLimits/read') send({ id: frame.id, result: { rateLimitsByLimitId: { codex: { limitName: 'Codex', primary: { usedPercent: 24, windowDurationMins: 300, resetsAt: 1893456000 }, secondary: { usedPercent: 53, windowDurationMins: 10080, resetsAt: 1894060800 } } } } });
+  if (frame.method === 'account/usage/read') send({ id: frame.id, result: { summary: { lifetimeTokens: 125000 }, dailyUsageBuckets: [{ startDate: '2026-10-25', tokens: 4500 }] } });
   if (frame.method === 'model/list') send({ id: frame.id, result: { data: [{ id: 'test', model: 'test-model', displayName: 'Test Model', isDefault: true, defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }], inputModalities: ['text', 'image'] }], nextCursor: null } });
   if (frame.method === 'thread/start') {
     if (frame.params.approvalPolicy !== 'on-request' || frame.params.sandbox !== 'workspace-write') process.exit(3);
@@ -14,6 +16,7 @@ createInterface({ input: process.stdin }).on('line', line => {
   if (frame.method === 'thread/archive') send({ id: frame.id, result: {} });
   if (frame.method === 'turn/start') {
     send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
+    send({ method: 'thread/tokenUsage/updated', params: { threadId: 'fixture-thread', tokenUsage: { total: { inputTokens: 1000, cachedInputTokens: 500, outputTokens: 250, reasoningOutputTokens: 100, totalTokens: 1250 }, modelContextWindow: 200000 } } });
     send({ method: 'turn/started', params: { threadId: 'fixture-thread', turn: { id: 'fixture-turn' } } });
     if (frame.params.input[0].text.includes('QUESTION_TEST')) send({ id: 'answer-question', method: 'item/tool/requestUserInput', params: { threadId: 'fixture-thread', turnId: 'fixture-turn', itemId: 'question-item', questions: [{ id: 'color', header: '配色', question: '使用哪种配色？', options: [{ label: '深蓝', description: '延续工作台颜色' }, { label: '绿色', description: '另一种配色' }] }] } });
     else send({ id: 'approve-command', method: 'item/commandExecution/requestApproval', params: { threadId: 'fixture-thread', turnId: 'fixture-turn', command: 'echo approved', cwd: '/fixture' } });

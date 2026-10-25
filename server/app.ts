@@ -18,22 +18,29 @@ import { Files, HttpError, streamFile } from './files.ts';
 import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
 import { appVersion } from '../shared/config.ts';
+import { UsageStore, ClaudeQuota } from './usage.ts';
+import { NotificationStore } from './notifications.ts';
+import { CloudObserver } from './cloud-observer.ts';
+import { claudeTokens } from '../shared/usage.ts';
+import { decodeEvent } from '../shared/protocol.ts';
 
 const exec = promisify(execFile);
-type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[] };
+type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota };
 type LoginSession = { token: string; cloudToken: string; username: string; expires: number };
 const readBearer = (req: Request) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
 const readCookie = (req: Request) => /(?:^|;\s*)studio=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
 export function createStudio(config: Config) {
   mkdirSync(config.state, { recursive: true, mode: 0o700 });
+  const notices = new NotificationStore(config.state), usage = new UsageStore(config.state), claudeQuota = config.claudeQuota ?? new ClaudeQuota();
   const modules = new FileModules(config.base, config.state, config.allowedDirectories);
-  const files = new Files(config.base, id => modules.root(id)), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile);
-  const codex = new CodexBridge(path.join(config.state, 'codex'));
+  const files = new Files(config.base, id => modules.root(id)), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile, job => notices.job(job));
+  const codex = new CodexBridge(path.join(config.state, 'codex'), config.codexCommand ?? 'codex', config.codexArgs ?? ['app-server', '--listen', 'stdio://'], event => { notices.ingest(event, 'codex'); usage.ingest(event); });
   const attachments = new Attachments(path.join(config.state, 'attachments'), files, config.cloudAssets ?? path.join(os.homedir(), '.cloudcli/assets'));
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 'loopback');
   const server = createServer(app), wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
   const sessionsFile = path.join(config.state, 'sessions.json');
   const sessions = new Map<string, LoginSession>(existsSync(sessionsFile) ? JSON.parse(readFileSync(sessionsFile, 'utf8')) : []);
+  const observer = new CloudObserver(config.cloud, () => [...sessions.values()].reverse().find(session => session.expires > Date.now())?.cloudToken, notices, id => codex.has(id), event => usage.ingest(event));
   const persistSessions = () => { writeFileSync(sessionsFile + '.tmp', JSON.stringify([...sessions]), { mode: 0o600 }); renameSync(sessionsFile + '.tmp', sessionsFile); };
   const socketOwners = new WeakMap<WebSocket, string>();
   const secretFile = path.join(config.state, 'preview.secret');
@@ -77,6 +84,7 @@ export function createStudio(config: Config) {
     const token = crypto.randomBytes(32).toString('base64url');
     const session = { token, cloudToken: String(result.token), username: credentials.username, expires: now + 7 * 86400_000 };
     sessions.set(token, session); persistSessions(); attempts.delete(key);
+    observer.start();
     res.cookie('studio', token, { httpOnly: true, secure: config.origin.startsWith('https:'), sameSite: 'strict', maxAge: 7 * 86400_000 });
     res.json({ token, username: credentials.username });
   }));
@@ -87,6 +95,21 @@ export function createStudio(config: Config) {
     res.clearCookie('studio'); res.json({ ok: true });
   });
   app.get('/api/me', (_req, res) => res.json({ username: res.locals.session.username }));
+  app.get('/api/usage/accounts', asyncRoute(async (_req, res) => res.json({ accounts: await Promise.all([codex.accountUsage(), claudeQuota.read()]) })));
+  app.get('/api/usage/sessions/:id', asyncRoute(async (req, res) => {
+    const id = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(req.params.id);
+    if (!codex.has(id)) {
+      const session = await cloud('/providers/sessions/' + id, res.locals.session.cloudToken);
+      if (session.data.provider === 'claude') {
+        try { usage.set(id, claudeTokens((await cloud('/providers/sessions/' + id + '/token-usage', res.locals.session.cloudToken)).data)); } catch { /* Keep the last actually reported snapshot. */ }
+      }
+    }
+    res.json({ snapshot: usage.get(id), reason: usage.get(id) ? undefined : '首轮返回用量后显示；尚未报告的数据不会估算' });
+  }));
+  app.get('/api/notifications', (req, res, next) => { try { observer.start(); const after = z.coerce.number().int().nonnegative().optional().parse(req.query.after); res.json(notices.page(after)); } catch(e) { next(e); } });
+  app.get('/api/notifications/:id', (req, res, next) => { try { res.json(notices.get(String(req.params.id))); } catch(e) { next(e); } });
+  app.post('/api/notifications/read-all', (_req, res) => { notices.read(); res.json({ ok: true }); });
+  app.post('/api/notifications/:id/read', (req, res, next) => { try { notices.read(String(req.params.id)); res.json({ ok: true }); } catch(e) { next(e); } });
   app.get('/api/agents/:provider/models', asyncRoute(async (req, res) => {
     const provider = z.enum(['claude', 'codex']).parse(req.params.provider);
     res.json({ models: provider === 'codex' ? await codex.models() : cloudModels((await cloud('/providers/claude/models', res.locals.session.cloudToken)).data) });
@@ -302,6 +325,7 @@ export function createStudio(config: Config) {
                   const models = cloudModels((await cloud('/providers/claude/models', ticket.session.cloudToken)).data);
                   const selected = validateModel(models, body.options.model, body.options.effort);
                   const images = await attachments.claudeImages(resolved);
+                  notices.begin(body.sessionId); observer.begin(body.sessionId);
                   const prepared = { type: 'chat.send', sessionId: body.sessionId, content: withFileReferences(body.content, resolved), options: { permissionMode: 'default', model: body.options.model ?? selected?.id, effort: body.options.effort ?? 'default', attachments: images } };
                   if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify(prepared)); else if (buffer.length < 30) buffer.push(Buffer.from(JSON.stringify(prepared)));
                 })().catch(e => { if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ kind: 'protocol_error', sessionId: message.sessionId, content: String(e) })); });
@@ -315,7 +339,10 @@ export function createStudio(config: Config) {
           } catch(e) { client.send(JSON.stringify({ kind: interactionRequest ? 'interaction_error' : 'protocol_error', requestId: interactionRequest, content: e instanceof Error ? e.message : '无效会话消息' })); }
         });
         upstream.on('open', () => { for (const data of buffer) upstream.send(data.toString()); });
-        upstream.on('message', data => { if (client.readyState === WebSocket.OPEN) client.send(data.toString()); });
+        upstream.on('message', data => {
+          if (ticket.channel === 'chat') { try { const event = decodeEvent(JSON.parse(data.toString())); if (event && !codex.has(event.sessionId ?? '')) { notices.ingest(event, 'claude'); usage.ingest(event); if (event.sessionId && event.kind !== 'chat_subscribed') observer.watch(event.sessionId); } } catch {} }
+          if (client.readyState === WebSocket.OPEN) client.send(data.toString());
+        });
         upstream.on('error', () => client.close(1011, 'CloudCLI 连接失败'));
         upstream.on('close', () => client.close());
         client.on('close', () => upstream.close());
@@ -323,6 +350,6 @@ export function createStudio(config: Config) {
       });
     } catch { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); }
   });
-  setTimeout(() => { void jobs.pump(); }, 0).unref();
-  return { app, server, jobs, files, codex, close: () => { codex.close(); jobs.stop(); wss.clients.forEach(c => c.close()); wss.close(); server.close(); } };
+  setTimeout(() => { void jobs.pump(); observer.start(); }, 0).unref();
+  return { app, server, jobs, files, codex, notices, usage, close: () => { observer.close(); codex.close(); jobs.stop(); wss.clients.forEach(c => c.close()); wss.close(); server.close(); } };
 }

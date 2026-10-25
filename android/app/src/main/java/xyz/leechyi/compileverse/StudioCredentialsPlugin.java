@@ -21,7 +21,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public class StudioCredentialsPlugin extends Plugin {
     private static final String ALIAS = "compileverse.studio.session";
     private SharedPreferences storage() { return getContext().getSharedPreferences("studio_credentials", Context.MODE_PRIVATE); }
-    private SecretKey key() throws Exception {
+    private static synchronized SecretKey key() throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore"); store.load(null);
         if (store.containsAlias(ALIAS)) return ((KeyStore.SecretKeyEntry) store.getEntry(ALIAS, null)).getSecretKey();
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
@@ -32,6 +32,15 @@ public class StudioCredentialsPlugin extends Plugin {
     private String slot(PluginCall call, String field) {
         String scope = call.getString("key");
         return scope == null ? field : field + ":" + scope;
+    }
+    /** Only the native monitor reads its own origin-scoped gateway token. */
+    public static String readToken(Context context, String origin) throws Exception {
+        SharedPreferences preferences = context.getSharedPreferences("studio_credentials", Context.MODE_PRIVATE);
+        String data = preferences.getString("data:" + origin, null), iv = preferences.getString("iv:" + origin, null);
+        if (data == null || iv == null) return "";
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)));
+        return new String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), StandardCharsets.UTF_8);
     }
     @PluginMethod public void set(PluginCall call) {
         String token = call.getString("token");

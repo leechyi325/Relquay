@@ -10,6 +10,7 @@ import { nativeImage, withFileReferences, type ResolvedAttachment } from './atta
 import { validateModel } from './models.ts';
 import { HttpError } from './files.ts';
 import { appVersion } from '../shared/config.ts';
+import { codexAccount, unavailableUsage, type AccountUsage } from '../shared/usage.ts';
 
 type Session = { id: string; cwd: string; threadId?: string; turnId?: string; seq: number; processing: boolean; events: ChatEvent[] };
 type Approval = { rpcId: string | number; sessionId: string; event: ChatEvent; questions?: boolean };
@@ -22,7 +23,8 @@ export class CodexBridge {
   private listeners = new Map<string, Set<WebSocket>>(); private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   private child?: ChildProcessWithoutNullStreams; private starting?: Promise<void>; private requestId = 0; private loaded = new Set<string>();
   private modelCache?: { expires: number; data: AgentModel[] };
-  constructor(private directory: string, private command = 'codex', private args = ['app-server', '--listen', 'stdio://']) {
+  private accountCache?: { expires: number; data: AccountUsage }; private accountLoading?: Promise<AccountUsage>;
+  constructor(private directory: string, private command = 'codex', private args = ['app-server', '--listen', 'stdio://'], private onEvent: (event: ChatEvent) => void = () => {}) {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const file = path.join(directory, 'sessions.json');
     if (fs.existsSync(file)) {
@@ -58,6 +60,7 @@ export class CodexBridge {
     const event = { ...value, id: value.id ?? crypto.randomUUID(), sessionId: session.id, provider: 'codex', timestamp: new Date().toISOString(), seq: ++session.seq };
     session.events.push(event);
     fs.appendFileSync(path.join(this.directory, session.id + '.jsonl'), JSON.stringify(event) + '\n', { mode: 0o600 });
+    this.onEvent(event);
     for (const ws of this.listeners.get(session.id) ?? []) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event));
     return event;
   }
@@ -69,10 +72,10 @@ export class CodexBridge {
     for (const event of session.events) if ((event.seq ?? 0) > lastSeq) ws.send(JSON.stringify(event));
   }
   private write(value: unknown) { if (!this.child?.stdin.writable) throw new Error('Codex App Server 未启动'); this.child.stdin.write(JSON.stringify(value) + '\n'); }
-  private request<T = unknown>(method: string, params: unknown): Promise<T> {
+  private request<T = unknown>(method: string, params: unknown, timeoutMs = 30000): Promise<T> {
     const id = ++this.requestId;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex ${method} 超时`)); }, 30000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex ${method} 超时`)); }, timeoutMs);
       this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
       try { this.write({ id, method, params }); } catch(e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
     });
@@ -112,6 +115,20 @@ export class CodexBridge {
       cursor = result.nextCursor ?? undefined;
     } while (cursor && data.length < 1000);
     this.modelCache = { data, expires: Date.now() + 60000 }; return data;
+  }
+  async accountUsage(): Promise<AccountUsage> {
+    if (this.accountCache && this.accountCache.expires > Date.now()) return this.accountCache.data;
+    if (this.accountLoading) return this.accountLoading;
+    this.accountLoading = (async () => {
+      try {
+        await this.start();
+        const [limits, activity] = await Promise.allSettled([this.request('account/rateLimits/read', {}, 10000), this.request('account/usage/read', {}, 10000)]);
+        const result = codexAccount(limits.status === 'fulfilled' ? limits.value : {}, activity.status === 'fulfilled' ? activity.value : undefined);
+        if (result.status === 'unavailable') result.reason = '当前账号未提供 Codex 额度；请检查服务器登录状态或账号登录方式';
+        return result;
+      } catch { return unavailableUsage('codex', '暂未取得 Codex 额度，请检查服务器账号登录状态'); }
+    })();
+    try { const data = await this.accountLoading; this.accountCache = { data, expires: Date.now() + 60000 }; return data; } finally { this.accountLoading = undefined; }
   }
   async send(id: string, content: string, options: Record<string, unknown> = {}, attachments: ResolvedAttachment[] = []) {
     const session = this.sessions.get(id); if (!session) throw new HttpError(404, '会话不存在');
@@ -155,6 +172,7 @@ export class CodexBridge {
       this.pending.delete(Number(frame.id)); clearTimeout(pending.timer);
       if (frame.error) pending.reject(new Error(frame.error.message)); else pending.resolve(frame.result); return;
     }
+    if (frame.method === 'account/rateLimits/updated') { this.accountCache = undefined; return; }
     const p = frame.params ?? {}, threadId = String(p.threadId ?? record(p.thread).id ?? '');
     const session = [...this.sessions.values()].find(s => s.threadId === threadId);
     if (frame.id !== undefined && frame.method) {
@@ -176,6 +194,7 @@ export class CodexBridge {
     if (!session) return;
     const item = record(p.item);
     switch (frame.method) {
+      case 'thread/tokenUsage/updated': this.emit(session, { kind: 'token_usage', tokenUsage: p.tokenUsage, turnId: p.turnId }); break;
       case 'turn/started': session.turnId = String(record(p.turn).id); this.emit(session, { kind: 'status', content: 'Codex 正在工作' }); break;
       case 'item/agentMessage/delta': this.emit(session, { kind: 'stream_delta', content: String(p.delta ?? ''), itemId: p.itemId }); break;
       case 'item/reasoning/summaryTextDelta': this.emit(session, { kind: 'thinking', content: String(p.delta ?? '') }); break;

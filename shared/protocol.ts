@@ -47,6 +47,8 @@ export function reduceChat(state: ChatState, event: ChatEvent): ChatState {
     case 'permission_resolved':
     case 'permission_cancelled':
       next.permissions = state.permissions.filter(e => e.requestId !== event.requestId); break;
+    case 'token_usage': break;
+    case 'status': if (!event.tokenBudget) next.processing = true; break;
     case 'complete': next.processing = false; next.permissions = []; break;
     case 'protocol_error': next.error = String(event.message ?? event.content ?? '会话连接错误'); next.processing = false; break;
     case 'interaction_error': next.error = String(event.content ?? '回应未被接受'); break;

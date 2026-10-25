@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { ClaudeQuota } from '../server/usage.ts';
 import { createStudio } from '../server/app.ts';
 export async function fixture(port = 0) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'roamdeck-test-'));
@@ -43,27 +44,38 @@ export async function fixture(port = 0) {
     if (url.pathname.endsWith('/models')) { res.end(JSON.stringify({ success: true, data: { models: { DEFAULT: 'claude-test', OPTIONS: [{ value: 'claude-test', label: 'Claude Test', effort: { default: 'medium', values: [{ value: 'low' }, { value: 'medium' }, { value: 'high' }] } }, { value: 'claude-fast', label: 'Claude Fast' }] } } })); return; }
     res.end(JSON.stringify({ success: true }));
   });
+  const subscribers = new Map<WebSocket, Set<string>>(), replay = new Map<string, Record<string, unknown>[]>();
+  const publish = (sessionId: string, event: Record<string, unknown>, reset = false) => {
+    if (reset) replay.set(sessionId, []);
+    const history = replay.get(sessionId) ?? [], message = { ...event, sessionId, seq: history.length + 1 }; history.push(message); replay.set(sessionId, history);
+    if (event.kind === 'complete') running.delete(sessionId); else running.add(sessionId);
+    for (const [client, ids] of subscribers) if (client.readyState === 1 && ids.has(sessionId)) client.send(JSON.stringify(message));
+  };
   const wss = new WebSocketServer({ server: upstream });
-  wss.on('connection', client => { client.on('message', value => {
+  wss.on('connection', client => { subscribers.set(client, new Set()); client.on('close', () => subscribers.delete(client)); client.on('message', value => {
     const input = JSON.parse(value.toString()); sentMessages.push(input);
-    if (input.type === 'chat.subscribe') client.send(JSON.stringify({ kind: 'chat_subscribed', sessionId: input.sessions[0]?.sessionId, isProcessing: false, pendingPermissions: [] }));
-    else if (input.type === 'chat.send') {
-      const sessionId = input.sessionId;
-      if (input.content.includes('UI_APPROVAL')) client.send(JSON.stringify({ kind: 'permission_request', sessionId, requestId: 'ui-approval', toolName: 'Bash', input: { command: 'npm run build', cwd: '/workspace/demo', description: '运行构建，核对页面修改' } }));
-      else if (input.content.includes('UI_QUESTION')) client.send(JSON.stringify({ kind: 'permission_request', sessionId, requestId: 'ui-question', toolName: 'AskUserQuestion', input: { questions: [{ header: '实现方式', question: '希望优先实现哪些入口？', multiSelect: true, options: [{ label: '文件', description: '优先完成文件管理' }, { label: '终端', description: '优先完成触屏终端' }] }] } }));
-      else { client.send(JSON.stringify({ kind: 'text', sessionId, role: 'assistant', content: '已收到测试消息和附件。' })); client.send(JSON.stringify({ kind: 'complete', sessionId })); }
-    } else if (input.type === 'chat.permission-response') { client.send(JSON.stringify({ kind: 'permission_resolved', requestId: input.requestId })); client.send(JSON.stringify({ kind: 'complete' })); }
-    else client.send(value.toString());
+    if (input.type === 'chat.subscribe') {
+      for (const item of input.sessions) { subscribers.get(client)!.add(item.sessionId); const events = replay.get(item.sessionId) ?? []; client.send(JSON.stringify({ kind: 'chat_subscribed', sessionId: item.sessionId, isProcessing: running.has(item.sessionId), pendingPermissions: running.has(item.sessionId) ? events.filter(event => event.kind === 'permission_request' && !events.some(next => next.kind === 'permission_resolved' && next.requestId === event.requestId)) : [] })); if (running.has(item.sessionId)) for (const event of events) if (Number(event.seq) > (item.lastSeq ?? 0)) client.send(JSON.stringify(event)); }
+    } else if (input.type === 'chat.send') {
+      const sessionId = input.sessionId; replay.set(sessionId, []); subscribers.get(client)!.add(sessionId);
+      if (input.content.includes('UI_APPROVAL')) publish(sessionId, { kind: 'permission_request', requestId: 'ui-approval', toolName: 'Bash', input: { command: 'npm run build', cwd: '/workspace/demo', description: '运行构建，核对页面修改' } });
+      else if (input.content.includes('UI_QUESTION')) publish(sessionId, { kind: 'permission_request', requestId: 'ui-question', toolName: 'AskUserQuestion', input: { questions: [{ header: '实现方式', question: '希望优先实现哪些入口？', multiSelect: true, options: [{ label: '文件', description: '优先完成文件管理' }, { label: '终端', description: '优先完成触屏终端' }] }] } });
+      else if (input.content.includes('WAIT_OBSERVER')) publish(sessionId, { kind: 'status', content: 'fixture is working' });
+      else { publish(sessionId, { kind: 'text', role: 'assistant', content: '已收到测试消息和附件。' }); publish(sessionId, { kind: 'complete' }); }
+    } else if (input.type === 'chat.permission-response') {
+      const sessionId = [...replay].find(([, events]) => events.some(event => event.requestId === input.requestId))?.[0];
+      if (sessionId) { publish(sessionId, { kind: 'permission_resolved', requestId: input.requestId }); publish(sessionId, { kind: 'complete' }); }
+    } else client.send(value.toString());
   }); });
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
   const address = upstream.address() as { port: number };
-  const studio = createStudio({ base: temp, state: path.join(temp, 'state'), cloud: `http://127.0.0.1:${address.port}`, dist: path.resolve('dist'), origin: 'http://127.0.0.1:' + port, allowedDirectories: [temp], cloudAssets: path.join(temp, 'cloud-assets'), clientOrigins: ['http://127.0.0.1:3090'] });
+  const studio = createStudio({ codexCommand: process.execPath, codexArgs: [path.resolve('tests/codex-fixture.mjs')], claudeQuota: new ClaudeQuota(path.join(temp, 'no-credentials')), base: temp, state: path.join(temp, 'state'), cloud: `http://127.0.0.1:${address.port}`, dist: path.resolve('dist'), origin: 'http://127.0.0.1:' + port, allowedDirectories: [temp], cloudAssets: path.join(temp, 'cloud-assets'), clientOrigins: ['http://127.0.0.1:3090'] });
   studio.server.listen(port, '127.0.0.1'); await once(studio.server, 'listening');
   const studioPort = (studio.server.address() as { port: number }).port, base = `http://127.0.0.1:${studioPort}`;
   const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'test-owner', password: 'fixture-password' }) });
   const { token } = await login.json() as { token: string };
   const call = (url: string, options?: RequestInit) => fetch(base + url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options?.headers } });
   const close = async () => { studio.close(); wss.clients.forEach(c => c.terminate()); wss.close(); upstream.close(); await fs.rm(temp, { recursive: true, force: true }); };
-  return { temp, base, token, call, close, studio, projects, catalog, running, sentMessages };
+  return { temp, base, token, call, close, studio, projects, catalog, running, sentMessages, publish };
 }
 export async function until(condition: () => boolean, timeout = 5000) { const start = Date.now(); while (!condition()) { if (Date.now() - start > timeout) throw new Error('Timed out waiting for state'); await new Promise(r => setTimeout(r, 25)); } }

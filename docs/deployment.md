@@ -59,3 +59,10 @@ Android 默认仅信任系统 CA，不随仓库分发实例专用 CA 或私钥�
 模块目录边界默认 home 与 STUDIO_BASE。若要绑定 `/srv/projects`，在网关服务环境配置 `STUDIO_BROWSE_ROOTS=/home/ubuntu:/srv/projects`。网页跨服务器使用时配置目标服务的 `STUDIO_CLIENT_ORIGINS` 为客户端网页的精确 scheme/host/port；Android 不需要额外开放来源。
 
 升级前检查 CloudCLI 运行会话、网关 Codex processing 和任务队列。只有全部空闲才重启网关。新接口要求前后端一并升级；备份原 app 源码/dist 与模块配置后发布，保留旧 APK。原生升级由相同 debug 签名验证。
+
+
+## 0.3 升级
+
+沿用包标识、签名与按服务器保存的 Keystore。Android versionCode 为 5。前后端需一起升级，保留原 state；新增的 notifications.json 与 token-usage.json 均为私有状态，不公开或提交。旧会话没有快照时显示尚未报告，不扫描历史文稿估算 Token。
+
+升级后在 Android 提醒中心主动开启后台监听并授权。FGS 类型 specialUse 的用途已写入 manifest；如以后发布到 Google Play，需另按商店审核要求申报该用途。当前交付为同签名 APK。服务器登录有效期仍为七天，过期需本人登录；不在后台自动保存密码或给 AI 授权。

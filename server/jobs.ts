@@ -7,12 +7,13 @@ import { Files, HttpError } from './files.ts';
 
 export class Jobs {
   records: Job[] = []; child?: ChildProcess; stopping = false;
-  constructor(public stateDir: string, private files: Files, private envFile?: string) {
+  constructor(public stateDir: string, private files: Files, private envFile?: string, private onTerminal: (job: Job) => void = () => {}) {
     fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     const database = path.join(stateDir, 'jobs.json');
     if (fs.existsSync(database)) this.records = JSON.parse(fs.readFileSync(database, 'utf8'));
     for (const job of this.records) if (job.status === 'running' || job.status === 'cancelling') {
       job.status = 'interrupted'; job.endedAt = new Date().toISOString();
+      this.onTerminal(job);
     }
     this.persist();
   }
@@ -48,11 +49,11 @@ export class Jobs {
       child.once('close', (code) => {
         job.exitCode = code; job.endedAt = new Date().toISOString();
         job.status = this.stopping ? 'interrupted' : job.status === 'cancelling' ? 'cancelled' : code === 0 ? 'succeeded' : 'failed';
-        this.child = undefined; this.persist(); void this.pump();
+        this.child = undefined; this.persist(); this.onTerminal(job); void this.pump();
       });
     } catch(e) {
       job.status = 'failed'; job.endedAt = new Date().toISOString(); this.child = undefined;
-      fs.appendFileSync(path.join(this.stateDir, `${job.id}.log`), String(e)); this.persist(); void this.pump();
+      fs.appendFileSync(path.join(this.stateDir, `${job.id}.log`), String(e)); this.persist(); this.onTerminal(job); void this.pump();
     }
   }
   cancel(id: string) {
