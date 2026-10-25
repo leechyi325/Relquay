@@ -15,6 +15,8 @@ import { FileModules } from './modules.ts';
 import { Attachments, withFileReferences } from './attachments.ts';
 import { cloudModels, validateModel } from './models.ts';
 import { Files, HttpError, streamFile } from './files.ts';
+import { Extensions } from './extensions.ts';
+import { providerSchema, extensionName, mcpWriteSchema, skillWriteSchema, pluginIdSchema } from '../shared/extensions.ts';
 import { AgentConfigs } from './agent-config.ts';
 import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
@@ -26,7 +28,7 @@ import { claudeTokens } from '../shared/usage.ts';
 import { decodeEvent } from '../shared/protocol.ts';
 
 const exec = promisify(execFile);
-type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs };
+type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions };
 type LoginSession = { token: string; cloudToken: string; username: string; expires: number };
 const readBearer = (req: Request) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
 const readCookie = (req: Request) => /(?:^|;\s*)studio=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
@@ -35,6 +37,7 @@ export function createStudio(config: Config) {
   const agentConfigs = config.agentConfigs ?? new AgentConfigs();
   const notices = new NotificationStore(config.state), usage = new UsageStore(config.state), claudeQuota = config.claudeQuota ?? new ClaudeQuota();
   const modules = new FileModules(config.base, config.state, config.allowedDirectories);
+  const extensions = config.extensions ?? new Extensions(config.state, agentConfigs, input => modules.directory(input));
   const files = new Files(config.base, id => modules.root(id)), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile, job => notices.job(job));
   const codex = new CodexBridge(path.join(config.state, 'codex'), config.codexCommand ?? 'codex', config.codexArgs ?? ['app-server', '--listen', 'stdio://'], event => { notices.ingest(event, 'codex'); usage.ingest(event); });
   const attachments = new Attachments(path.join(config.state, 'attachments'), files, config.cloudAssets ?? path.join(os.homedir(), '.cloudcli/assets'));
@@ -112,6 +115,17 @@ export function createStudio(config: Config) {
   app.get('/api/notifications/:id', (req, res, next) => { try { res.json(notices.get(String(req.params.id))); } catch(e) { next(e); } });
   app.post('/api/notifications/read-all', (_req, res) => { notices.read(); res.json({ ok: true }); });
   app.post('/api/notifications/:id/read', (req, res, next) => { try { notices.read(String(req.params.id)); res.json({ ok: true }); } catch(e) { next(e); } });
+  app.get('/api/agents/:provider/skills', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.skills(providerSchema.parse(req.params.provider))); }));
+  app.post('/api/agents/:provider/skills', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = skillWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveSkill(provider, body.name, body.content))); }));
+  app.put('/api/agents/:provider/skills/:id', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = skillWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveSkill(provider, body.name, body.content, String(req.params.id), body.revision))); }));
+  app.post('/api/agents/:provider/skills/import', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = z.object({ name: extensionName, path: z.string().min(1).max(2000) }).parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.importSkill(provider, body.name, body.path))); }));
+  app.delete('/api/agents/:provider/skills/:id', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = z.object({ revision: z.string() }).parse(req.body); await extensions.exclusive(provider, () => extensions.removeSkill(provider, String(req.params.id), body.revision)); res.json({ ok: true }); }));
+  app.get('/api/agents/:provider/mcp', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.mcps(providerSchema.parse(req.params.provider))); }));
+  app.get('/api/agents/:provider/mcp/:name', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.mcps(providerSchema.parse(req.params.provider), extensionName.parse(req.params.name))); }));
+  app.put('/api/agents/:provider/mcp', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = mcpWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveMcp(provider, body.name, body.config, body.enabled, body.revision, false, body.create))); }));
+  app.delete('/api/agents/:provider/mcp/:name', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = z.object({ revision: z.string() }).parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveMcp(provider, extensionName.parse(req.params.name), {}, false, body.revision, true))); }));
+  app.get('/api/agents/:provider/plugins', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.plugins(providerSchema.parse(req.params.provider))); }));
+  app.post('/api/agents/:provider/plugins', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = z.object({ id: pluginIdSchema, action: z.enum(['install', 'enable', 'disable', 'remove']) }).parse(req.body); await extensions.exclusive(provider, () => extensions.pluginAction(provider, body.id, body.action)); res.json({ ok: true }); }));
   app.get('/api/agents/:provider/config', asyncRoute(async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json(await agentConfigs.read(z.enum(['claude', 'codex']).parse(req.params.provider)));
@@ -119,7 +133,8 @@ export function createStudio(config: Config) {
   app.put('/api/agents/:provider/config', asyncRoute(async (req, res) => {
     const body = z.object({ content: z.string().max(512 * 1024), revision: z.string().length(64) }).parse(req.body);
     res.set('Cache-Control', 'no-store');
-    res.json(await agentConfigs.write(z.enum(['claude', 'codex']).parse(req.params.provider), body.content, body.revision));
+    const provider = providerSchema.parse(req.params.provider);
+    res.json(await extensions.exclusive(provider, () => agentConfigs.write(provider, body.content, body.revision)));
   }));
   app.get('/api/agents/:provider/models', asyncRoute(async (req, res) => {
     const provider = z.enum(['claude', 'codex']).parse(req.params.provider);

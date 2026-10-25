@@ -1,0 +1,53 @@
+// Run on the deployment host with tsx; never modifies the real CLI homes.
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { createInterface } from 'node:readline';
+import { once } from 'node:events';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { AgentConfigs } from '../server/agent-config.ts';
+import { Extensions } from '../server/extensions.ts';
+const exec = promisify(execFile), temp = await fs.mkdtemp(path.join(os.tmpdir(), 'roamdeck-extension-cli-'));
+const homes = { codex: path.join(temp, 'codex'), claude: path.join(temp, 'claude') };
+const run = async (provider, args) => (await exec(provider, args, { cwd: temp, env: { ...process.env, CODEX_HOME: homes.codex, CLAUDE_CONFIG_DIR: homes.claude, CI: '1' }, timeout: 45000, maxBuffer: 4 * 1024 * 1024 })).stdout;
+const configs = new AgentConfigs(homes), extensions = new Extensions(path.join(temp, 'state'), configs, async input => { const real = await fs.realpath(input); assert.ok(real.startsWith(temp)); return real; }, { home: temp, claudeJson: path.join(homes.claude, '.claude.json'), codexSkillRoots: [path.join(homes.codex, 'skills')], run });
+let child;
+try {
+  let state = await extensions.mcps('codex');
+  await extensions.saveMcp('codex', 'roamdeck-probe', { url: 'http://127.0.0.1:9/mcp' }, false, state.revision);
+  const codex = JSON.parse(await run('codex', ['mcp', 'list', '--json']));
+  assert.ok(codex.some(server => server.name === 'roamdeck-probe' && server.enabled === false));
+  await extensions.saveSkill('codex', 'roamdeck-native-skill', '---\nname: roamdeck-native-skill\ndescription: isolated skill discovery check\n---\nUse this test workflow.');
+  child = spawn('codex', ['app-server', '--listen', 'stdio://'], { cwd: temp, env: { ...process.env, CODEX_HOME: homes.codex }, stdio: ['pipe', 'pipe', 'ignore'] });
+  const lines = createInterface({ input: child.stdout }), pending = new Map(); let seq = 0;
+  lines.on('line', line => { try { const value = JSON.parse(line), item = pending.get(value.id); if (item) { clearTimeout(item.timer); pending.delete(value.id); value.error ? item.reject(new Error('Codex RPC failed')) : item.resolve(value.result); } } catch {} });
+  const request = (method, params) => new Promise((resolve, reject) => { const id = ++seq; const timer = setTimeout(() => { pending.delete(id); reject(new Error('Codex RPC timeout')); }, 20000); pending.set(id, { resolve, reject, timer }); child.stdin.write(JSON.stringify({ id, method, params }) + '\n'); });
+  await request('initialize', { clientInfo: { name: 'roamdeck-extension-check', version: '0.4.0' } });
+  child.stdin.write('{"method":"initialized","params":{}}\n');
+  const skills = await request('skills/list', { cwds: [temp], forceReload: true });
+  assert.ok(skills.data.some(row => row.skills.some(skill => skill.name === 'roamdeck-native-skill')));
+  const closed = once(child, 'close'); child.kill('SIGTERM'); await closed; child = undefined; lines.close();
+
+  state = await extensions.mcps('claude');
+  await extensions.saveMcp('claude', 'roamdeck-probe', { type: 'stdio', command: 'node', args: ['--version'] }, false, state.revision);
+  const disabled = await extensions.mcps('claude', 'roamdeck-probe');
+  await extensions.saveMcp('claude', 'roamdeck-probe', disabled.config, true, disabled.revision);
+  assert.match(await run('claude', ['mcp', 'list']), /roamdeck-probe/);
+  const market = path.join(temp, 'market');
+  await fs.mkdir(path.join(market, '.claude-plugin'), { recursive: true });
+  await fs.mkdir(path.join(market, 'probe/.claude-plugin'), { recursive: true });
+  await fs.writeFile(path.join(market, '.claude-plugin/marketplace.json'), JSON.stringify({ name: 'roamdeck-fixture', owner: { name: 'RoamDeck test' }, plugins: [{ name: 'probe', source: './probe', description: 'Isolated empty acceptance plugin' }] }));
+  await fs.writeFile(path.join(market, 'probe/.claude-plugin/plugin.json'), JSON.stringify({ name: 'probe', version: '1.0.0', description: 'Isolated empty acceptance plugin' }));
+  await run('claude', ['plugin', 'marketplace', 'add', market, '--scope', 'user', '--json']);
+  await extensions.pluginAction('claude', 'probe@roamdeck-fixture', 'install');
+  assert.ok((await extensions.plugins('claude')).some(plugin => plugin.id === 'probe@roamdeck-fixture'));
+  await extensions.pluginAction('claude', 'probe@roamdeck-fixture', 'disable');
+  assert.equal((await extensions.plugins('claude'))[0].enabled, false);
+  await extensions.pluginAction('claude', 'probe@roamdeck-fixture', 'enable');
+  assert.equal((await extensions.plugins('claude'))[0].enabled, true);
+  await extensions.pluginAction('claude', 'probe@roamdeck-fixture', 'remove');
+  assert.equal((await extensions.plugins('claude')).length, 0);
+  console.log(JSON.stringify({ passed: true, checks: ['Codex CLI reads disabled MCP config', 'Codex App Server discovers user Skill', 'Claude CLI reads restored user MCP config', 'Claude isolated marketplace plugin install/list/disable/enable/uninstall'], realUserHomesModified: false, modelInference: false }));
+} finally { if (child) { const closed = once(child, 'close'); child.kill('SIGTERM'); await closed; } await fs.rm(temp, { recursive: true, force: true }); }

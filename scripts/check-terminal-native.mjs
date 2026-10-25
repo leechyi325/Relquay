@@ -61,7 +61,9 @@ try {
   await page.getByText('已复制', { exact: true }).waitFor();
   await device.screenshot({ path: 'artifacts/native-terminal-copy.png' });
   await page.getByRole('dialog', { name: '复制终端输出', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '终端工具', exact: true }).click();
   await page.getByLabel('终端宽度', { exact: true }).selectOption('80');
+  await page.getByRole('dialog', { name: '终端工具', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
   await until(async () => (await dimensions()).cols === 80); await page.waitForTimeout(300);
   const fixed = await verifySize();
   const python = "import os,sys; c,r=os.get_terminal_size(); sys.stdout.write('\\x1b[?1049h\\x1b[2J'); [sys.stdout.write(f'\\x1b[{n};1H|'+('-'*(c-2) if n in [1,r-1] else ' '*(c-2))+'|') for n in range(1,r)]; sys.stdout.write(f'\\x1b[4;{c-9}H\\x1b[97;41mRIGHT_EDGE\\x1b[0m\\x1b[{r};1H'); sys.stdout.flush(); input(); sys.stdout.write('\\x1b[?1049l'); sys.stdout.flush()";
@@ -75,14 +77,20 @@ try {
   await until(() => page.locator('.terminal-scroll').evaluate(node => node.scrollLeft > 50));
   await slider.focus(); await slider.press('End'); await fits();
   await device.screenshot({ path: 'artifacts/native-terminal-right-edge.png' });
+  await page.getByRole('button', { name: '扩展终端按键', exact: true }).click();
   await page.getByRole('button', { name: '回车', exact: true }).click();
+  await page.getByRole('button', { name: '扩展终端按键', exact: true }).click();
+  await page.getByRole('button', { name: '终端工具', exact: true }).click();
   await page.getByLabel('终端宽度', { exact: true }).selectOption('120');
+  await page.getByRole('dialog', { name: '终端工具', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
   await until(async () => (await dimensions()).cols === 120); await page.waitForTimeout(300);
   await verifySize();
   await device.shell('settings put system accelerometer_rotation 0');
   await device.shell('settings put system user_rotation 1');
   await until(() => page.evaluate(() => innerWidth > innerHeight));
-  await page.getByLabel('终端宽度', { exact: true }).selectOption('fit'); await page.waitForTimeout(400); await fits();
+  await page.getByRole('button', { name: '终端工具', exact: true }).click();
+  await page.getByLabel('终端宽度', { exact: true }).selectOption('fit');
+  await page.getByRole('dialog', { name: '终端工具', exact: true }).getByRole('button', { name: '关闭', exact: true }).click(); await page.waitForTimeout(400); await fits();
   const landscape = await verifySize();
   await device.screenshot({ path: 'artifacts/native-terminal-landscape.png' });
   await device.shell('settings put system user_rotation 0');
@@ -91,7 +99,7 @@ try {
   assert.equal(initCount, 1, 'Changing display modes restarted the terminal');
   await page.getByRole('button', { name: '命令编辑器', exact: false }).click();
   await run('exit');
-  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['14px output inset', 'touch selectable output contains real marker', 'system clipboard write succeeds', 'server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'one PTY init across mode changes'], realPhoneTested: false };
+  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['display tools sheet and collapsed extended keys', '14px output inset', 'touch selectable output contains real marker', 'system clipboard write succeeds', 'server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'one PTY init across mode changes'], realPhoneTested: false };
   await writeFile('artifacts/terminal-revision-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
   await device.shell('settings put system user_rotation 0').catch(() => {});

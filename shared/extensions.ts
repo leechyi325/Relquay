@@ -1,0 +1,12 @@
+import { z } from 'zod';
+export const providerSchema = z.enum(['claude', 'codex']);
+export type AgentProvider = z.infer<typeof providerSchema>;
+export const extensionName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/).refine(value => !['constructor', 'prototype', '__proto__'].includes(value), '无效名称');
+export const pluginIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}@[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/);
+export type SkillEntry = { id: string; name: string; description: string; path: string; revision: string; content: string; editable: boolean };
+export type McpEntry = { name: string; enabled: boolean; transport: string; endpoint: string };
+export type McpDocument = { revision: string; entries: McpEntry[] };
+export type McpDetail = { name: string; enabled: boolean; config: Record<string, unknown>; revision: string };
+export type PluginEntry = { id: string; name: string; version: string; enabled: boolean; scope: string; managed: boolean };
+export const mcpWriteSchema = z.object({ name: extensionName, config: z.record(z.string(), z.unknown()), enabled: z.boolean(), create: z.boolean().optional(), revision: z.string().min(1) });
+export const skillWriteSchema = z.object({ name: extensionName, content: z.string().max(256 * 1024), revision: z.string().optional() });

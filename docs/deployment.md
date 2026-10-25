@@ -71,3 +71,11 @@ Android 默认仅信任系统 CA，不随仓库分发实例专用 CA 或私钥�
 源码默认使用示例域名。自托管打包时设置 `VITE_STUDIO_ORIGIN=https://你的域名:28443 npm run android:build`，无需把实例域名改回共享源码。已有安装中的服务器列表不受默认值变更影响。
 
 0.3.1 增加“工作台设置 → Claude / Codex 配置文件”。编辑的是服务用户的全局 `config.toml` / `settings.json`，遵循 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`。保存只校验格式；运行中的代理不会被自动重启。
+
+## 0.4 扩展配置与备份
+
+Skills 默认写入服务用户 ~/.agents/skills（Codex）或 ~/.claude/skills（Claude）。MCP 使用各代理原生用户配置；Claude 全局关闭的连接暂存于工作台 state/claude-mcp-disabled.json，备份时保留它以便恢复开关。原配置文件与暂存文件均可能包含连接密钥，不能放进静态目录或 Git。
+
+插件管理调用 PATH 中固定的 codex/claude 命令，默认在服务用户 home 中运行；服务必须具备正常的 CLI、市场配置及所需账号权限。只设置用户级插件，不覆盖项目级配置。支持 CODEX_HOME / CLAUDE_CONFIG_DIR；配置变更不会自动终止已有轮次。
+
+可在服务运行环境执行 `node --import tsx scripts/check-extension-cli.mjs` 验证 CLI 兼容性。该脚本使用临时 CLI 配置目录与空测试插件，结束后清理，不修改正式账号目录。

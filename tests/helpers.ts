@@ -6,6 +6,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { ClaudeQuota } from '../server/usage.ts';
+import { Extensions } from '../server/extensions.ts';
 import { AgentConfigs } from '../server/agent-config.ts';
 import { createStudio } from '../server/app.ts';
 export async function fixture(port = 0) {
@@ -70,13 +71,24 @@ export async function fixture(port = 0) {
   }); });
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
   const address = upstream.address() as { port: number };
-  const studio = createStudio({ agentConfigs: new AgentConfigs({ codex: path.join(temp, 'agent-codex'), claude: path.join(temp, 'agent-claude') }), codexCommand: process.execPath, codexArgs: [path.resolve('tests/codex-fixture.mjs')], claudeQuota: new ClaudeQuota(path.join(temp, 'no-credentials')), base: temp, state: path.join(temp, 'state'), cloud: `http://127.0.0.1:${address.port}`, dist: path.resolve('dist'), origin: 'http://127.0.0.1:' + port, allowedDirectories: [temp], cloudAssets: path.join(temp, 'cloud-assets'), clientOrigins: ['http://127.0.0.1:3090'] });
+  const agentConfigs = new AgentConfigs({ codex: path.join(temp, 'agent-codex'), claude: path.join(temp, 'agent-claude') });
+  const pluginRecords: { id: string; version: string; enabled: boolean; scope: string }[] = [];
+  const extensions = new Extensions(path.join(temp, 'state'), agentConfigs, async value => { const real = await fs.realpath(value); if (!real.startsWith(await fs.realpath(temp) + path.sep)) throw new Error('outside fixture'); return real; }, { home: temp, claudeJson: path.join(temp, '.claude.json'), codexSkillRoots: [path.join(temp, 'agent-codex/skills')], run: async (provider, args) => {
+    if (args[1] === 'list') return JSON.stringify(provider === 'codex' ? { installed: pluginRecords.map(item => ({ ...item, pluginId: item.id, name: item.id.split('@')[0] })) } : pluginRecords);
+    const id = args[2], item = pluginRecords.find(item => item.id === id);
+    if (['install', 'add'].includes(args[1])) pluginRecords.push({ id, version: '1.0.0', enabled: true, scope: 'user' });
+    if (args[1] === 'disable' && item) item.enabled = false;
+    if (args[1] === 'enable' && item) item.enabled = true;
+    if (['remove', 'uninstall'].includes(args[1]) && item) pluginRecords.splice(pluginRecords.indexOf(item), 1);
+    return '{}';
+  } });
+  const studio = createStudio({ agentConfigs, extensions, codexCommand: process.execPath, codexArgs: [path.resolve('tests/codex-fixture.mjs')], claudeQuota: new ClaudeQuota(path.join(temp, 'no-credentials')), base: temp, state: path.join(temp, 'state'), cloud: `http://127.0.0.1:${address.port}`, dist: path.resolve('dist'), origin: 'http://127.0.0.1:' + port, allowedDirectories: [temp], cloudAssets: path.join(temp, 'cloud-assets'), clientOrigins: ['http://127.0.0.1:3090'] });
   studio.server.listen(port, '127.0.0.1'); await once(studio.server, 'listening');
   const studioPort = (studio.server.address() as { port: number }).port, base = `http://127.0.0.1:${studioPort}`;
   const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'test-owner', password: 'fixture-password' }) });
   const { token } = await login.json() as { token: string };
   const call = (url: string, options?: RequestInit) => fetch(base + url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options?.headers } });
   const close = async () => { studio.close(); wss.clients.forEach(c => c.terminate()); wss.close(); upstream.close(); await fs.rm(temp, { recursive: true, force: true }); };
-  return { temp, base, token, call, close, studio, projects, catalog, running, sentMessages, publish };
+  return { temp, base, token, call, close, studio, projects, catalog, running, sentMessages, publish, extensions };
 }
 export async function until(condition: () => boolean, timeout = 5000) { const start = Date.now(); while (!condition()) { if (Date.now() - start > timeout) throw new Error('Timed out waiting for state'); await new Promise(r => setTimeout(r, 25)); } }

@@ -5,7 +5,7 @@ createInterface({ input: process.stdin }).on('line', line => {
   const frame = JSON.parse(line);
   if (process.argv[2]) appendFileSync(process.argv[2], JSON.stringify(frame) + '\n');
   if (frame.method === 'initialize') send({ id: frame.id, result: {} });
-  if (frame.method === 'account/rateLimits/read') send({ id: frame.id, result: { rateLimitsByLimitId: { codex: { limitName: 'Codex', primary: { usedPercent: 24, windowDurationMins: 300, resetsAt: 1893456000 }, secondary: { usedPercent: 53, windowDurationMins: 10080, resetsAt: 1894060800 } } } } });
+  if (frame.method === 'account/rateLimits/read') send({ id: frame.id, result: { rateLimitsByLimitId: { codex: { limitName: 'Codex', primary: { usedPercent: 24, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 7200 }, secondary: { usedPercent: 53, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + 5 * 86400 } } } } });
   if (frame.method === 'account/usage/read') send({ id: frame.id, result: { summary: { lifetimeTokens: 125000 }, dailyUsageBuckets: [{ startDate: '2026-10-25', tokens: 4500 }] } });
   if (frame.method === 'model/list') send({ id: frame.id, result: { data: [{ id: 'test', model: 'test-model', displayName: 'Test Model', isDefault: true, defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }], inputModalities: ['text', 'image'] }], nextCursor: null } });
   if (frame.method === 'thread/start') {
