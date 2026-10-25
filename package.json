@@ -19,7 +19,7 @@
   "dependencies": {
     "@capacitor/android": "8.5.3",
     "@capacitor/app": "8.0.1",
-    "@capacitor/browser": "8.0.1",
+    "@capacitor/browser": "8.0.5",
     "@capacitor/core": "8.5.3",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-web-links": "0.12.0",
