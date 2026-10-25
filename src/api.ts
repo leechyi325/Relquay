@@ -5,7 +5,8 @@ interface Credentials { get(options?: { key: string }): Promise<{ token?: string
 const secure = registerPlugin<Credentials>('StudioCredentials');
 const nativeFiles = registerPlugin<{ download(options: { url: string; filename: string; mime?: string }): Promise<void>; openManager(options: { url: string }): Promise<void> }>('StudioFiles');
 export const isNative = Capacitor.isNativePlatform();
-const initial = loadServers(localStorage, isNative ? defaultOrigin : location.origin);
+const nativeOrigin = import.meta.env.VITE_STUDIO_ORIGIN ? normalizeOrigin(import.meta.env.VITE_STUDIO_ORIGIN) : defaultOrigin;
+const initial = loadServers(localStorage, isNative ? nativeOrigin : location.origin);
 export let origin = initial.profiles.find(p => p.id === initial.active)!.origin;
 let bearer = '';
 let generation = 0;

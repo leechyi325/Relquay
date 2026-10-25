@@ -10,7 +10,7 @@ if (!sshTarget) throw new Error('Set STUDIO_SSH_TARGET to the SSH user and host 
 const device = (await _android.devices()).find(value => value.serial() === 'emulator-5554');
 if (!device) throw new Error('Isolated emulator is not running');
 const directory = '终端验收-' + Date.now();
-let page, initCount = 0, sessionId = '', token;
+let page, initCount = 0, sessionId = '', token, testPath = '';
 const call = async (url, body) => {
   const response = await fetch(credentials.url + url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(body) });
   const data = await response.json(); assert.ok(response.ok, JSON.stringify(data)); return data;
@@ -20,6 +20,7 @@ try {
   device.setDefaultTimeout(25000);
   ({ token } = await call('/api/login', credentials));
   await call('/api/files/folder', { root: 'inputs', path: directory });
+  testPath = (await call('/api/files/resolve', { root: 'inputs', path: directory })).path;
   await device.shell('am force-stop xyz.leechyi.compileverse');
   await device.shell('am start -n xyz.leechyi.compileverse/.MainActivity');
   page = await (await device.webView({ pkg: 'xyz.leechyi.compileverse' })).page();
@@ -49,6 +50,17 @@ try {
   const initial = await verifySize();
   const fits = async () => { const result = await page.evaluate(() => { const screen = document.querySelector('.xterm-screen').getBoundingClientRect(), viewport = document.querySelector('.terminal-scroll').getBoundingClientRect(); return screen.right <= viewport.right + 1; }); assert.equal(result, true, 'Rightmost terminal column is clipped'); };
   await fits();
+  const padding = await page.evaluate(() => { const screen = document.querySelector('.xterm-screen').getBoundingClientRect(), viewport = document.querySelector('.terminal-scroll').getBoundingClientRect(); return screen.left - viewport.left; });
+  assert.ok(padding >= 13, 'Terminal padding is missing');
+  await run("printf '\\nROAMDECK_COPY_CHECK\\n'");
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: '选择与复制终端输出', exact: true }).click();
+  assert.match(await page.getByLabel('可复制的终端输出', { exact: true }).inputValue(), /ROAMDECK_COPY_CHECK/);
+  await page.getByRole('button', { name: '全选文本', exact: true }).click();
+  await page.getByRole('button', { name: '复制文本', exact: true }).click();
+  await page.getByText('已复制', { exact: true }).waitFor();
+  await device.screenshot({ path: 'artifacts/native-terminal-copy.png' });
+  await page.getByRole('dialog', { name: '复制终端输出', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByLabel('终端宽度', { exact: true }).selectOption('80');
   await until(async () => (await dimensions()).cols === 80); await page.waitForTimeout(300);
   const fixed = await verifySize();
@@ -79,6 +91,12 @@ try {
   assert.equal(initCount, 1, 'Changing display modes restarted the terminal');
   await page.getByRole('button', { name: '命令编辑器', exact: false }).click();
   await run('exit');
-  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'one PTY init across mode changes'], realPhoneTested: false };
+  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['14px output inset', 'touch selectable output contains real marker', 'system clipboard write succeeds', 'server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'one PTY init across mode changes'], realPhoneTested: false };
   await writeFile('artifacts/terminal-revision-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
-} finally { await device.shell('settings put system user_rotation 0').catch(() => {}); await device.close(); }
+} finally {
+  await device.shell('settings put system user_rotation 0').catch(() => {});
+  await device.shell('am force-stop xyz.leechyi.compileverse').catch(() => {});
+  if (/^cv-[a-zA-Z0-9]+$/.test(sessionId)) await exec('ssh', ['-o', 'BatchMode=yes', sshTarget, 'tmux kill-session -t ' + sessionId]).catch(() => {});
+  if (testPath.endsWith('/' + directory)) await exec('ssh', ['-o', 'BatchMode=yes', sshTarget, "rmdir -- '" + testPath.replace(/'/g, "'\\''") + "'"]).catch(() => {});
+  await device.close();
+}

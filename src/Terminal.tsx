@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CornerDownLeft, Maximize2, Minimize2, Minus, Play, Plus, RefreshCw, SquareTerminal } from 'lucide-react';
 import { socket, openExternal, post, origin } from './api';
+import { Sheet } from './Files';
 import { useFileModules } from './file-roots';
 import type { FileLocation, ServerStatus } from '../shared/protocol';
 import '@xterm/xterm/css/xterm.css';
@@ -12,6 +13,7 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
   const effectiveRoot = roots.some(root => root.id === cwd.root) ? cwd.root : roots[0]?.id ?? cwd.root;
   const host = useRef<HTMLDivElement>(null), viewport = useRef<HTMLDivElement>(null), term = useRef<XTerm>(null), connection = useRef<WebSocket>(null);
   const resize = useRef<() => void>(() => {}), width = useRef('fit'), size = useRef(12);
+  const [copyText, setCopyText] = useState<string>();
   const [mode, setMode] = useState('fit'), [fontSize, setFontSize] = useState(12), [fullscreen, setFullscreen] = useState(false), [editor, setEditor] = useState(true);
   const [dimensions, setDimensions] = useState({ cols: 0, rows: 0 }), [pan, setPan] = useState({ value: 0, max: 0 });
   const ctrl = useRef(false), [control, setControl] = useState(false), [ready, setReady] = useState(false), [command, setCommand] = useState(''), [reconnect, setReconnect] = useState(0);
@@ -29,13 +31,13 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
       if (disposed || scroller.clientWidth < 1 || scroller.clientHeight < 1) return;
       terminal.options.fontSize = size.current;
       // FitAddon measures the direct parent; keep this surface free of padding.
-      surface.style.width = '100%';
+      surface.style.width = Math.max(1, scroller.clientWidth - 28) + 'px';
       const proposed = fit.proposeDimensions();
       const screen = surface.querySelector('.xterm-screen');
       const cell = screen ? screen.getBoundingClientRect().width / terminal.cols : 0;
       if (!proposed || !cell) return;
       const cols = width.current === 'fit' ? proposed.cols : Number(width.current);
-      surface.style.width = width.current === 'fit' ? '100%' : Math.ceil(cols * cell + 16) + 'px';
+      surface.style.width = width.current === 'fit' ? Math.max(1, scroller.clientWidth - 28) + 'px' : Math.ceil(cols * cell + 16) + 'px';
       terminal.resize(cols, Math.max(2, proposed.rows));
       surface.dataset.cols = String(terminal.cols); surface.dataset.rows = String(terminal.rows);
       setDimensions({ cols: terminal.cols, rows: terminal.rows });
@@ -109,12 +111,13 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
     <div className="section-heading"><div><span className="eyebrow">SERVER TERMINAL</span><h1>随手掌控。</h1></div><button className="icon-button" aria-label="重新连接终端" onClick={() => setReconnect(v => v + 1)}><RefreshCw size={19}/></button></div>
     <p className="muted terminal-intro">适应屏宽，或固定列数后左右滑动查看。</p>
     <div className="quick-actions"><button onClick={() => run('pwd')}>当前目录</button><button onClick={() => run('df -h')}>磁盘空间</button><button onClick={() => run('free -h')}>内存</button><button onClick={() => run('codex login --device-auth')}>登录 Codex</button><button onClick={() => run('claude auth login')}>登录 Claude</button></div>
-    <div className="terminal-controls"><label>宽度<select aria-label="终端宽度" value={mode} onChange={e => setMode(e.target.value)}><option value="fit">适应屏宽</option><option value="80">80 列</option><option value="120">120 列</option></select></label><div><button aria-label="缩小终端字号" disabled={fontSize <= 9} onClick={() => setFontSize(v => v - 1)}><Minus size={15}/></button><span>{fontSize}</span><button aria-label="增大终端字号" disabled={fontSize >= 20} onClick={() => setFontSize(v => v + 1)}><Plus size={15}/></button></div><span className="terminal-dimensions" aria-label="终端尺寸">{dimensions.cols} × {dimensions.rows}</span><button aria-label={fullscreen ? '退出终端全屏' : '终端全屏'} onClick={() => { setFullscreen(!fullscreen); setEditor(fullscreen); }}>{fullscreen ? <Minimize2 size={17}/> : <Maximize2 size={17}/>}</button></div>
+    <div className="terminal-controls"><label>宽度<select aria-label="终端宽度" value={mode} onChange={e => setMode(e.target.value)}><option value="fit">适应屏宽</option><option value="80">80 列</option><option value="120">120 列</option></select></label><div><button aria-label="缩小终端字号" disabled={fontSize <= 9} onClick={() => setFontSize(v => v - 1)}><Minus size={15}/></button><span>{fontSize}</span><button aria-label="增大终端字号" disabled={fontSize >= 20} onClick={() => setFontSize(v => v + 1)}><Plus size={15}/></button></div><button className="terminal-copy-button" aria-label="选择与复制终端输出" onClick={() => { const terminal = term.current; if (!terminal) return; const buffer = terminal.buffer.active; setCopyText(terminal.getSelection() || Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '').join('\n').trimEnd()); }}>复制</button><span className="terminal-dimensions" aria-label="终端尺寸">{dimensions.cols} × {dimensions.rows}</span><button aria-label={fullscreen ? '退出终端全屏' : '终端全屏'} onClick={() => { setFullscreen(!fullscreen); setEditor(fullscreen); }}>{fullscreen ? <Minimize2 size={17}/> : <Maximize2 size={17}/>}</button></div>
     <section className="terminal-card"><header><span className={'dot ' + (ready ? 'green' : '')}/><span>ubuntu · {cwd.root}{cwd.path ? '/' + cwd.path : ''}</span><span className="terminal-badge">{ready ? '已连接' : '正在连接'}</span></header><div className="terminal-scroll" ref={viewport} onScroll={e => setPan({ value: e.currentTarget.scrollLeft, max: Math.max(0, e.currentTarget.scrollWidth - e.currentTarget.clientWidth) })}><div ref={host} className="terminal-screen"/></div>
       {mode !== 'fit' && pan.max > 0 && <label className="terminal-pan"><span>左右查看</span><input aria-label="终端横向位置" type="range" min={0} max={pan.max} value={pan.value} onChange={e => { if (viewport.current) viewport.current.scrollLeft = Number(e.target.value); }}/><span>{Math.round(pan.value / pan.max * 100)}%</span></label>}
       <div className="key-bar">{[['Esc', '\u001b'], ['Tab', '\t']].map(([label, data]) => <button key={label} onClick={() => { write(data); term.current?.focus(); }}>{label}</button>)}<button className={control ? 'selected' : ''} onClick={() => { ctrl.current = !ctrl.current; setControl(ctrl.current); term.current?.focus(); }}>Ctrl</button><button onClick={() => write('\u0003')}>^C</button>{[[ArrowLeft, '\u001b[D'], [ArrowDown, '\u001b[B'], [ArrowUp, '\u001b[A'], [ArrowRight, '\u001b[C']].map(([Icon, data], i) => { const KeyIcon = Icon as typeof ArrowUp; return <button key={i} aria-label={['向左', '向下', '向上', '向右'][i]} onClick={() => write(data as string)}><KeyIcon size={16}/></button>; })}<button aria-label="回车" onClick={() => write('\r')}><CornerDownLeft size={16}/></button></div>
     </section>
     <div className="command-box"><button className="command-toggle" aria-expanded={editor} onClick={() => setEditor(!editor)}>命令编辑器 <span>{editor ? '收起' : '展开'}</span></button>{editor && <><label htmlFor="command" className="sr-only">命令编辑器，支持粘贴与多行输入</label><textarea id="command" value={command} onChange={e => setCommand(e.target.value)} placeholder="输入命令，编辑好后再执行…" rows={fullscreen ? 2 : 3}/><button className="primary" disabled={!command.trim() || !ready} onClick={() => run(command)}><Play size={15}/>执行命令</button></>}</div>
+    {copyText !== undefined && <Sheet title="复制终端输出" close={() => setCopyText(undefined)}><p className="inline-note">长按文本可选择片段；也可以选中全部后使用系统复制。</p><textarea className="terminal-copy-text" aria-label="可复制的终端输出" readOnly value={copyText} spellCheck={false}/><div className="interaction-actions"><button onClick={e => { const area = e.currentTarget.closest('.sheet')?.querySelector('textarea'); area?.focus(); area?.select(); }}>全选文本</button><button className="primary" onClick={async e => { const area = e.currentTarget.closest('.sheet')?.querySelector('textarea'); try { const text = area && area.selectionEnd > area.selectionStart ? area.value.slice(area.selectionStart, area.selectionEnd) : copyText; await navigator.clipboard.writeText(text); toast('已复制'); } catch { area?.focus(); area?.select(); toast('请长按已选文本，使用系统复制'); } }}>复制文本</button></div></Sheet>}
     {!fullscreen && history.length > 0 && <div className="command-history"><span className="eyebrow">最近使用</span>{history.slice(0, 4).map(text => <button key={text} onClick={() => { setCommand(text); setEditor(true); }}><SquareTerminal size={15}/><code>{text}</code></button>)}</div>}
   </div>;
 }

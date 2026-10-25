@@ -6,6 +6,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { ClaudeQuota } from '../server/usage.ts';
+import { AgentConfigs } from '../server/agent-config.ts';
 import { createStudio } from '../server/app.ts';
 export async function fixture(port = 0) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'roamdeck-test-'));
@@ -69,7 +70,7 @@ export async function fixture(port = 0) {
   }); });
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
   const address = upstream.address() as { port: number };
-  const studio = createStudio({ codexCommand: process.execPath, codexArgs: [path.resolve('tests/codex-fixture.mjs')], claudeQuota: new ClaudeQuota(path.join(temp, 'no-credentials')), base: temp, state: path.join(temp, 'state'), cloud: `http://127.0.0.1:${address.port}`, dist: path.resolve('dist'), origin: 'http://127.0.0.1:' + port, allowedDirectories: [temp], cloudAssets: path.join(temp, 'cloud-assets'), clientOrigins: ['http://127.0.0.1:3090'] });
+  const studio = createStudio({ agentConfigs: new AgentConfigs({ codex: path.join(temp, 'agent-codex'), claude: path.join(temp, 'agent-claude') }), codexCommand: process.execPath, codexArgs: [path.resolve('tests/codex-fixture.mjs')], claudeQuota: new ClaudeQuota(path.join(temp, 'no-credentials')), base: temp, state: path.join(temp, 'state'), cloud: `http://127.0.0.1:${address.port}`, dist: path.resolve('dist'), origin: 'http://127.0.0.1:' + port, allowedDirectories: [temp], cloudAssets: path.join(temp, 'cloud-assets'), clientOrigins: ['http://127.0.0.1:3090'] });
   studio.server.listen(port, '127.0.0.1'); await once(studio.server, 'listening');
   const studioPort = (studio.server.address() as { port: number }).port, base = `http://127.0.0.1:${studioPort}`;
   const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'test-owner', password: 'fixture-password' }) });

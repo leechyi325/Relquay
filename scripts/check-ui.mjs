@@ -37,6 +37,20 @@ try {
   assert.equal(await usage.getByText('暂不可用', { exact: true }).count(), 1);
   await shot('android-account-usage');
   await usage.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '工作台设置', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Claude / Codex 配置文件', exact: true }).click();
+  await page.getByLabel('代理配置内容', { exact: true }).fill('model = "fixture-only"');
+  await shot('agent-config-codex');
+  await page.getByRole('button', { name: '保存配置', exact: true }).click();
+  await page.getByRole('button', { name: '保存配置', exact: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('.config-path span')?.textContent === '服务器文件');
+  await page.getByRole('dialog', { name: '代理配置文件', exact: true }).getByRole('button', { name: 'Claude Code', exact: true }).click();
+  await page.getByLabel('代理配置内容', { exact: true }).fill('{"permissions": {}}');
+  await shot('agent-config-claude');
+  await page.getByRole('button', { name: '保存配置', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.config-path span')?.textContent === '服务器文件');
+  await page.getByRole('dialog', { name: '代理配置文件', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+
   await page.getByRole('button', { name: '打开提醒中心', exact: true }).click();
   const inbox = page.getByRole('dialog', { name: '提醒中心' });
   await inbox.getByRole('button', { name: /后台任务已完成/ }).waitFor();
@@ -50,6 +64,11 @@ try {
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '文件', exact: true }).click();
   await page.getByRole('button', { name: /^README.md/ }).waitFor();
   await shot('android-files');
+  await page.getByRole('button', { name: '新建文件夹', exact: true }).click();
+  await page.getByRole('dialog', { name: '新建文件夹', exact: true }).getByRole('textbox').fill('手机新建目录');
+  await shot('directory-create-in-context');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByRole('button', { name: /^手机新建目录/ }).first().waitFor();
   await page.locator('input[type=file]').setInputFiles({ name: '项目笔记.md', mimeType: 'text/markdown', buffer: Buffer.from('# 项目笔记\n\nUI 集成测试上传') });
   await page.getByRole('button', { name: /项目笔记.md/ }).first().waitFor();
   await page.getByRole('button', { name: /README.md/ }).first().click();
@@ -62,6 +81,17 @@ try {
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('heading', { name: '验证后台任务' }).waitFor();
   await shot('android-jobs');
+  await page.getByRole('button', { name: /验证后台任务/ }).click();
+  await page.getByRole('button', { name: '编辑任务', exact: true }).click();
+  await page.getByLabel('任务名称', { exact: true }).fill('已修改的后台任务');
+  assert.equal(await page.getByLabel('执行命令', { exact: true }).getAttribute('readonly'), '');
+  await shot('job-edit-completed');
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
+  await page.getByRole('dialog', { name: '已修改的后台任务', exact: true }).waitFor();
+  await page.getByRole('button', { name: '删除任务', exact: true }).click();
+  await shot('job-delete-confirmation');
+  await page.getByRole('button', { name: '确认删除', exact: true }).click();
+  await page.getByRole('heading', { name: '已修改的后台任务', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: '新建任务' }).click();
   await page.getByLabel('任务名称').fill('手机提交的任务');
   await page.getByLabel('执行命令').fill('echo mobile-job-complete');
@@ -76,6 +106,12 @@ try {
   };
   await terminalFits();
   await shot('android-terminal');
+  const inset = await page.evaluate(() => { const screen = document.querySelector('.xterm-screen').getBoundingClientRect(), box = document.querySelector('.terminal-scroll').getBoundingClientRect(); return screen.left - box.left; });
+  assert.ok(inset >= 13, 'Terminal output needs comfortable padding');
+  await page.getByRole('button', { name: '选择与复制终端输出' }).click();
+  await page.getByLabel('可复制的终端输出').waitFor();
+  await shot('terminal-touch-copy');
+  await page.getByRole('dialog', { name: '复制终端输出' }).getByRole('button', { name: '关闭', exact: true }).click();
   let terminalConnections = 0;
   page.on('websocket', ws => { if (ws.url().includes('/ws/terminal')) terminalConnections++; });
   for (const cols of ['80', '120']) {
@@ -111,7 +147,7 @@ try {
   await page.getByRole('heading', { name: '这次，想完成什么？' }).waitFor();
   await shot('android-chat');
   await page.getByRole('button', { name: '模型与思考设置' }).click();
-  await page.getByLabel('选择模型', { exact: true }).selectOption('claude-test');
+  await page.getByRole('group', { name: '选择模型', exact: true }).getByRole('button', { name: /Claude Test/ }).click();
   await page.getByRole('button', { name: '高', exact: true }).click();
   await shot('chat-model-effort');
   await page.getByRole('button', { name: '完成设置' }).click();

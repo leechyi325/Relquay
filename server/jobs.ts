@@ -67,6 +67,21 @@ export class Jobs {
     }
     this.persist(); return job;
   }
+  update(id: string, title: string, command?: string) {
+    const job = this.records.find(job => job.id === id);
+    if (!job) throw new HttpError(404, '任务不存在');
+    if (command !== undefined && command !== job.command && job.status !== 'queued') throw new HttpError(409, '只有排队中的任务可以修改执行命令');
+    job.title = title;
+    if (command !== undefined) job.command = command;
+    this.persist(); return job;
+  }
+  remove(id: string) {
+    const job = this.records.find(job => job.id === id);
+    if (!job) throw new HttpError(404, '任务不存在');
+    if (['running', 'cancelling'].includes(job.status)) throw new HttpError(409, '请先取消任务，等待停止后再删除');
+    this.records = this.records.filter(job => job.id !== id); this.persist();
+    fs.rmSync(path.join(this.stateDir, `${id}.log`), { force: true });
+  }
   signal(signal: NodeJS.Signals) { if (this.child?.pid) { try { process.kill(-this.child.pid, signal); } catch {} } }
   log(id: string) {
     if (!this.records.some(j => j.id === id)) throw new HttpError(404, '任务不存在');

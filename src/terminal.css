@@ -1,5 +1,5 @@
 /* FitAddon measures the direct parent: do not add padding to terminal-screen. */
-.terminal-page .terminal-scroll{height:clamp(260px,52dvh,540px);padding:0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-color:#819b9b #142833;scrollbar-width:thin;background:#142833;min-width:0}
+.terminal-page .terminal-scroll{height:clamp(260px,52dvh,540px);padding:14px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-color:#819b9b #142833;scrollbar-width:thin;background:#142833;min-width:0}
 .terminal-page .terminal-screen{height:100%;width:100%;padding:0;overflow:visible}
 .terminal-page .terminal-screen .xterm{height:100%;padding:0}
 .terminal-page .terminal-card{min-width:0}

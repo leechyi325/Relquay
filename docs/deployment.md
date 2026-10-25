@@ -65,3 +65,9 @@ Android 默认仅信任系统 CA，不随仓库分发实例专用 CA 或私钥�
 沿用包标识、签名与按服务器保存的 Keystore。Android versionCode 为 5。前后端需一起升级，保留原 state；新增的 notifications.json 与 token-usage.json 均为私有状态，不公开或提交。旧会话没有快照时显示尚未报告，不扫描历史文稿估算 Token。
 
 升级后在 Android 提醒中心主动开启后台监听并授权。FGS 类型 specialUse 的用途已写入 manifest；如以后发布到 Google Play，需另按商店审核要求申报该用途。当前交付为同签名 APK。服务器登录有效期仍为七天，过期需本人登录；不在后台自动保存密码或给 AI 授权。
+
+## Android 构建入口
+
+源码默认使用示例域名。自托管打包时设置 `VITE_STUDIO_ORIGIN=https://你的域名:28443 npm run android:build`，无需把实例域名改回共享源码。已有安装中的服务器列表不受默认值变更影响。
+
+0.3.1 增加“工作台设置 → Claude / Codex 配置文件”。编辑的是服务用户的全局 `config.toml` / `settings.json`，遵循 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`。保存只校验格式；运行中的代理不会被自动重启。

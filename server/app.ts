@@ -15,6 +15,7 @@ import { FileModules } from './modules.ts';
 import { Attachments, withFileReferences } from './attachments.ts';
 import { cloudModels, validateModel } from './models.ts';
 import { Files, HttpError, streamFile } from './files.ts';
+import { AgentConfigs } from './agent-config.ts';
 import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
 import { appVersion } from '../shared/config.ts';
@@ -25,12 +26,13 @@ import { claudeTokens } from '../shared/usage.ts';
 import { decodeEvent } from '../shared/protocol.ts';
 
 const exec = promisify(execFile);
-type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota };
+type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs };
 type LoginSession = { token: string; cloudToken: string; username: string; expires: number };
 const readBearer = (req: Request) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
 const readCookie = (req: Request) => /(?:^|;\s*)studio=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
 export function createStudio(config: Config) {
   mkdirSync(config.state, { recursive: true, mode: 0o700 });
+  const agentConfigs = config.agentConfigs ?? new AgentConfigs();
   const notices = new NotificationStore(config.state), usage = new UsageStore(config.state), claudeQuota = config.claudeQuota ?? new ClaudeQuota();
   const modules = new FileModules(config.base, config.state, config.allowedDirectories);
   const files = new Files(config.base, id => modules.root(id)), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile, job => notices.job(job));
@@ -110,6 +112,15 @@ export function createStudio(config: Config) {
   app.get('/api/notifications/:id', (req, res, next) => { try { res.json(notices.get(String(req.params.id))); } catch(e) { next(e); } });
   app.post('/api/notifications/read-all', (_req, res) => { notices.read(); res.json({ ok: true }); });
   app.post('/api/notifications/:id/read', (req, res, next) => { try { notices.read(String(req.params.id)); res.json({ ok: true }); } catch(e) { next(e); } });
+  app.get('/api/agents/:provider/config', asyncRoute(async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json(await agentConfigs.read(z.enum(['claude', 'codex']).parse(req.params.provider)));
+  }));
+  app.put('/api/agents/:provider/config', asyncRoute(async (req, res) => {
+    const body = z.object({ content: z.string().max(512 * 1024), revision: z.string().length(64) }).parse(req.body);
+    res.set('Cache-Control', 'no-store');
+    res.json(await agentConfigs.write(z.enum(['claude', 'codex']).parse(req.params.provider), body.content, body.revision));
+  }));
   app.get('/api/agents/:provider/models', asyncRoute(async (req, res) => {
     const provider = z.enum(['claude', 'codex']).parse(req.params.provider);
     res.json({ models: provider === 'codex' ? await codex.models() : cloudModels((await cloud('/providers/claude/models', res.locals.session.cloudToken)).data) });
@@ -252,6 +263,8 @@ export function createStudio(config: Config) {
     const body = z.object({ title: z.string().min(1).max(200), command: z.string().min(1).max(16000), cwd: locationSchema }).parse(req.body);
     res.status(201).json(await jobs.add(body.title, body.command, body.cwd));
   }));
+  app.put('/api/jobs/:id', (req, res, next) => { try { const body = z.object({ title: z.string().trim().min(1).max(200), command: z.string().trim().min(1).max(20000).optional() }).parse(req.body); res.json(jobs.update(String(req.params.id), body.title, body.command)); } catch(e) { next(e); } });
+  app.delete('/api/jobs/:id', (req, res, next) => { try { jobs.remove(String(req.params.id)); res.json({ ok: true }); } catch(e) { next(e); } });
   app.post('/api/jobs/:id/cancel', (req, res) => res.json(jobs.cancel(String(req.params.id))));
   app.get('/api/jobs/:id/log', (req, res) => res.json({ log: jobs.log(String(req.params.id)) }));
   app.get('/api/roots', (_req, res) => res.json(modules.listRoots()));
