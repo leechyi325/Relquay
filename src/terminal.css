@@ -1,0 +1,28 @@
+/* FitAddon measures the direct parent: do not add padding to terminal-screen. */
+.terminal-page .terminal-scroll{height:clamp(260px,52dvh,540px);padding:0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-color:#819b9b #142833;scrollbar-width:thin;background:#142833;min-width:0}
+.terminal-page .terminal-screen{height:100%;width:100%;padding:0;overflow:visible}
+.terminal-page .terminal-screen .xterm{height:100%;padding:0}
+.terminal-page .terminal-card{min-width:0}
+.terminal-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;min-height:44px;font-size:11px;color:#778b80}
+.terminal-controls>label,.terminal-controls>div{display:flex;align-items:center;gap:5px}
+.terminal-controls select{border:1px solid #dce2d6;border-radius:8px;min-height:42px;padding:0 6px;color:#293d50;background:#fffefa;font-size:12px}
+.terminal-controls button{display:flex;align-items:center;justify-content:center;width:32px;min-height:42px;border:1px solid #dce2d6;border-radius:8px}
+.terminal-dimensions{margin-left:auto;font-variant-numeric:tabular-nums;font-size:10px}
+.terminal-pan{display:flex;align-items:center;gap:10px;color:#c3d0c7;font-size:10px;padding:0 12px;min-height:44px;background:#1a303c}
+.terminal-pan input{flex:1;min-width:0;min-height:40px;accent-color:#d9a47c;touch-action:pan-y}
+.terminal-page .command-toggle{display:flex;justify-content:space-between;align-items:center;font-size:12px;text-align:left;padding:0;width:100%}
+.command-toggle span{font-size:10px;color:#8b9d8b}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.terminal-page.is-fullscreen{position:fixed;inset:0;z-index:55;max-width:none!important;width:100%;height:var(--visual-height,100dvh);margin:0!important;padding:max(8px,env(safe-area-inset-top)) 10px max(8px,env(safe-area-inset-bottom));display:flex;flex-direction:column;background:#f7f5ef;overflow:hidden}
+.terminal-page.is-fullscreen>.section-heading{flex-shrink:0;min-height:44px}
+.terminal-page.is-fullscreen h1{font-size:17px;margin:0}
+.terminal-page.is-fullscreen .eyebrow,.terminal-page.is-fullscreen .terminal-intro,.terminal-page.is-fullscreen .quick-actions{display:none}
+.terminal-page.is-fullscreen .terminal-controls{flex-shrink:0;margin:4px 0;gap:6px}
+.terminal-page.is-fullscreen .terminal-card{display:flex;flex-direction:column;flex:1;min-height:90px;border-radius:10px;box-shadow:none}
+.terminal-page.is-fullscreen .terminal-card>header{padding:9px 10px;flex-shrink:0}
+.terminal-page.is-fullscreen .terminal-scroll{height:auto;flex:1;min-height:0}
+.terminal-page.is-fullscreen .key-bar,.terminal-page.is-fullscreen .terminal-pan{flex-shrink:0}
+.terminal-page.is-fullscreen .command-box{flex-shrink:0;padding:0 10px;margin-top:6px;border-radius:9px}
+.terminal-page.is-fullscreen .command-box textarea{padding:5px 0;max-height:80px}
+.terminal-page.is-fullscreen .command-box .primary{margin-bottom:8px}
+@media(max-height:500px){.terminal-page.is-fullscreen>.section-heading{display:none}.terminal-page.is-fullscreen .terminal-controls{margin-top:0}.terminal-page.is-fullscreen .terminal-controls button{min-height:34px}.terminal-page.is-fullscreen .terminal-card>header{display:none}.terminal-page.is-fullscreen .key-bar{padding:4px}.terminal-page.is-fullscreen .key-bar button{min-height:30px}}

@@ -1,0 +1,156 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Activity, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, Clock3, Cpu, FolderOpen, GitBranch, HardDrive, Layers3, LoaderCircle, LogOut, MessageSquare, MoreHorizontal, Paperclip, Play, Plus, RefreshCw, Server, Settings2, ShieldCheck, Sparkles, Square, SquareTerminal, X } from 'lucide-react';
+import Markdown from 'react-markdown';
+import { api, cloud, isNative, origin, openManager, post, restoreToken, saveToken, setOrigin } from './api';
+import { useChat } from './useChat';
+import { FilesPage, Sheet, bytes } from './Files';
+import { Terminal } from './Terminal';
+import { NewSession, SessionActions, useConversationPath } from './Sessions';
+import { appVersion } from '../shared/config';
+import { type ChatEvent, type Conversation, type FileEntry, type FileLocation, type Job, type Provider, type ServerStatus } from '../shared/protocol';
+
+type Tab = 'work' | 'jobs' | 'files' | 'terminal';
+const tabs = [{ id: 'work', label: '工作台', icon: MessageSquare }, { id: 'jobs', label: '任务', icon: Layers3 }, { id: 'files', label: '文件', icon: FolderOpen }, { id: 'terminal', label: '终端', icon: SquareTerminal }] as const;
+const providerNames = { claude: 'Claude Code', codex: 'Codex' };
+const statusNames: Record<Job['status'], string> = { queued: '等待中', running: '运行中', cancelling: '正在取消', cancelled: '已取消', succeeded: '已完成', failed: '失败', interrupted: '已中断' };
+
+export function App() {
+  const [sessionActions, setSessionActions] = useState<Conversation>();
+  const [authenticated, setAuthenticated] = useState(false), [restoring, setRestoring] = useState(true), [tab, setTab] = useState<Tab>('work'), [status, setStatus] = useState<ServerStatus>(), [conversations, setConversations] = useState<Conversation[]>([]), [jobs, setJobs] = useState<Job[]>([]), [current, setCurrent] = useState<Conversation>(), [provider, setProvider] = useState<Provider>('claude'), [location, setLocation] = useState<FileLocation>({ root: 'project', path: '' }), [cwd, setCwd] = useState<FileLocation>({ root: 'project', path: '' }), [settings, setSettings] = useState(false), [newSession, setNewSession] = useState(false), [notice, setNotice] = useState(''), [error, setError] = useState(''), [reference, setReference] = useState<FileEntry>(), [refreshing, setRefreshing] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const toast = useCallback((message: string) => { setNotice(message); clearTimeout(timer.current); timer.current = setTimeout(() => setNotice(''), 5000); }, []);
+  useEffect(() => { void restoreToken().then(async token => { if (token) { await api('/api/me'); setAuthenticated(true); } }).catch(() => { void saveToken(''); }).finally(() => setRestoring(false)); }, []);
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    const results = await Promise.allSettled([
+      api<ServerStatus>('/api/status').then(setStatus),
+      cloud<{ conversations: Conversation[] }>('/providers/sessions/recent?limit=30').then(v => setConversations(v.conversations)),
+      api<Job[]>('/api/jobs').then(setJobs),
+    ]);
+    const failure = results.find(v => v.status === 'rejected');
+    setError(failure?.status === 'rejected' ? String(failure.reason) : ''); setRefreshing(false);
+  }, []);
+  useEffect(() => {
+    if (!authenticated) return; void refresh();
+    const interval = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh(); }, 12000);
+    const wake = () => { if (document.visibilityState === 'visible') void refresh(); };
+    document.addEventListener('visibilitychange', wake);
+    return () => { clearInterval(interval); document.removeEventListener('visibilitychange', wake); };
+  }, [authenticated, refresh]);
+  useEffect(() => {
+    if (!isNative) return;
+    let cleanup: (() => void) | undefined;
+    void import('@capacitor/app').then(async ({ App: NativeApp }) => {
+      const listener = await NativeApp.addListener('backButton', () => {
+        if (document.querySelector('.viewer .icon-button')) (document.querySelector('.viewer .icon-button') as HTMLButtonElement).click();
+        else if (document.querySelector('.sheet header .icon-button')) (Array.from(document.querySelectorAll<HTMLButtonElement>('.sheet header .icon-button')).at(-1))?.click();
+        else if (document.querySelector('.terminal-page.is-fullscreen')) document.querySelector<HTMLButtonElement>('[aria-label="退出终端全屏"]')?.click();
+        else if (current) setCurrent(undefined);
+        else if (tab !== 'work') setTab('work');
+        else void NativeApp.minimizeApp();
+      }); cleanup = () => { void listener.remove(); };
+    }); return () => cleanup?.();
+  }, [current, tab]);
+  function terminal(value: FileLocation) { setCwd(value); setTab('terminal'); }
+  if (restoring) return <div className="launch"><img src="/brand.svg" alt="RoamDeck"/><span>正在连接工作台…</span></div>;
+  if (!authenticated) return <Login done={() => setAuthenticated(true)}/>;
+  return <div className="app-shell">
+    <aside className="desktop-rail"><a className="wordmark" href="#" onClick={e => { e.preventDefault(); setCurrent(undefined); setTab('work'); }}><img src="/brand.svg" alt=""/><span>RoamDeck<small>随行台</small></span></a><div className="rail-label">你的工作空间</div><nav>{tabs.map(t => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}><t.icon size={20}/>{t.label}{t.id === 'jobs' && jobs.some(j => j.status === 'running') && <span className="dot green"/>}</button>)}</nav><div className="rail-project"><span className="eyebrow">CURRENT PROJECT</span><h3>远程工作区</h3><p>项目与任务，随处接续。</p><span><GitBranch size={13}/> 服务器工作区</span></div><button className="rail-settings" onClick={() => setSettings(true)}><Settings2 size={19}/>工作台设置</button></aside>
+    <main className={'main-content ' + (current && tab === 'work' ? 'chat-main' : '')}>
+      <header className="top-bar"><button className="mobile-brand" onClick={() => { setCurrent(undefined); setTab('work'); }}><img src="/brand.svg" alt=""/><span>RoamDeck</span></button><div className="desktop-breadcrumb">工作空间 <ChevronRight size={13}/> <strong>{current && tab === 'work' ? current.sessionTitle : tabs.find(t => t.id === tab)?.label}</strong></div><div className="top-actions"><span className={'connection-pill ' + (status?.cloudcli ? 'online' : '')}><span className="dot"/>{status?.cloudcli ? '服务器在线' : '连接中'}</span><button className="avatar-button" aria-label="工作台设置" onClick={() => setSettings(true)}>RD</button></div></header>
+      {error && <div className="error-banner compact"><span>{error}</span><button onClick={() => void refresh()}>重试</button></div>}
+      {tab === 'work' && (current ? <Chat key={current.sessionId} conversation={current} back={() => { setCurrent(undefined); void refresh(); }} reference={reference} clearReference={() => setReference(undefined)} toast={toast} status={status} manage={() => setSessionActions(current)}/> : <div className="workspace-page">
+        <div className="section-heading"><div><span className="eyebrow">YOUR REMOTE WORKSPACE</span><h1>工作，随时接续。</h1></div><button className="icon-button" aria-label="刷新工作台" onClick={() => void refresh()}><RefreshCw size={18} className={refreshing ? 'spin' : ''}/></button></div>
+        <p className="muted workspace-subtitle">电脑不在身边，工作依然在线。</p>
+        <section className="hero-card"><div className="hero-copy"><span className="hero-tag"><span className="dot"/> ROAMDECK</span><h2>你的工作台，<br/>随时在场。</h2><p>连接 AI、文件与终端，继续手头的工作。</p><button onClick={() => setNewSession(true)}>开始新会话 <ArrowUpRight size={18}/></button></div><div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="art-frame frame-back"/><div className="art-frame frame-mid"/><div className="art-frame frame-front"><img className="art-brand" src="/brand.svg" alt=""/><div className="art-timeline"><span/><span/><span/></div></div><span className="art-caption">AI → CODE → ACTION</span><div className="spark spark-one">✧</div><div className="spark spark-two">+</div></div></section>
+        <div className="stats-row"><div><div className="stat-icon"><Server size={18}/></div><div><span>云端环境</span><strong>{status ? `${status.architecture.toUpperCase()} · ${Math.round(status.memoryTotal / 1024 ** 3)} GB` : '正在连接'}</strong></div></div><div><div className="stat-icon"><Activity size={18}/></div><div><span>后台任务</span><strong>{jobs.filter(j => j.status === 'running').length} 个运行中</strong></div></div><div className="stat-disk"><div className="stat-icon"><HardDrive size={18}/></div><div><span>剩余空间</span><strong>{status ? bytes(status.diskFree) : '—'}</strong></div></div></div>
+        <div className="section-heading small"><h2>选择 AI 助手</h2><span className="quiet-label">在服务器上运行</span></div>
+        <div className="provider-cards">{(['claude', 'codex'] as const).map(id => { const info = status?.providers.find(p => p.id === id); return <button key={id} onClick={() => { setProvider(id); setNewSession(true); }} className={'provider-card ' + id}><div className="provider-symbol">{id === 'claude' ? <span>✳</span> : <CodeMark/>}</div><div><h3>{providerNames[id]}</h3><p>{id === 'claude' ? '理解任务，协助规划与实现' : '编写代码，检查与执行任务'}</p><span className={info?.authorized ? 'provider-ready' : 'provider-pending'}><span className="dot"/>{!info ? '读取状态…' : !info.installed ? '尚未安装' : info.authorized ? '已授权，可开始' : '已安装，待账号授权'}</span></div><ArrowUpRight size={18}/></button>; })}</div>
+        <div className="section-heading small recent-heading"><h2>最近会话 <span>{conversations.length.toString().padStart(2, '0')}</span></h2><button className="text-button" onClick={() => setNewSession(true)}><Plus size={15}/>新建会话</button></div>
+        {conversations.length ? <div className="conversation-list">{conversations.map(c => <div className="conversation-row" key={c.sessionId}><button className="conversation-open" onClick={() => { setCurrent(c); setProvider(c.provider); }}><span className={'session-icon ' + c.provider}>{c.provider === 'claude' ? '✳' : <CodeMark/>}</span><span className="conversation-label"><strong>{c.sessionTitle}</strong><small>{providerNames[c.provider]} · {c.projectDisplayName}</small></span><span className="session-time">{c.lastActivity ? new Date(c.lastActivity).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : ''}</span><ChevronRight size={16}/></button><button className="icon-button" aria-label={"会话操作 " + c.sessionTitle} onClick={() => setSessionActions(c)}><MoreHorizontal size={19}/></button></div>)}</div> : <div className="empty recent-empty"><MessageSquare size={28}/><h3>从一个新会话开始。</h3><p>让 AI 帮你阅读项目、编写代码或执行任务。</p><button className="text-button" onClick={() => setNewSession(true)}>新建第一个会话 <ArrowRight size={16}/></button></div>}
+        <div className="workspace-note"><ShieldCheck size={15}/><span>项目与任务，由你的服务器管理。</span></div>
+      </div>)}
+      {tab === 'jobs' && <JobsPage jobs={jobs} refresh={refresh} toast={toast} openOutputs={() => { setLocation({ root: 'outputs', path: '' }); setTab('files'); }}/>}
+      {tab === 'files' && <FilesPage location={location} setLocation={setLocation} terminal={terminal} reference={entry => { setReference(entry); setTab('work'); if (!current) setNewSession(true); }} toast={toast}/>}
+      {tab === 'terminal' && <Terminal cwd={cwd} status={status} toast={toast}/>}
+    </main>
+    <nav className="bottom-nav" aria-label="主导航">{tabs.map(t => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}><span><t.icon size={21} strokeWidth={tab === t.id ? 2 : 1.6}/>{t.id === 'jobs' && jobs.some(j => j.status === 'running') && <i/>}</span>{t.label}</button>)}</nav>
+    {newSession && <NewSession provider={provider} setProvider={setProvider} initialCwd={location} close={() => setNewSession(false)} created={session => { setCurrent(session); setConversations(list => [session, ...list]); setTab('work'); setNewSession(false); }}/>}
+    {sessionActions && <SessionActions conversation={sessionActions} close={() => setSessionActions(undefined)} deleted={() => { const id = sessionActions.sessionId; setSessionActions(undefined); setConversations(list => list.filter(item => item.sessionId !== id)); if (current?.sessionId === id) setCurrent(undefined); toast('会话已删除，项目文件已保留'); void refresh(); }}/>}
+    {settings && <Sheet title="你的工作台" close={() => setSettings(false)}><div className="settings-server"><Server size={22}/><div><strong>{new URL(origin).hostname}</strong><span>{status?.hostname ?? '读取服务器信息…'}</span></div><span className="dot green"/></div><div className="settings-meters"><label>内存<span>{status ? `${bytes(status.memoryUsed)} / ${bytes(status.memoryTotal)}` : '—'}</span></label><progress max={status?.memoryTotal ?? 1} value={status?.memoryUsed ?? 0}/><label>CPU 负载<span>{status ? (status.cpu * 100).toFixed(0) + '%' : '—'}</span></label><progress max={1} value={status?.cpu ?? 0}/></div><div className="action-list"><button onClick={() => { setSettings(false); setTab('terminal'); }}><SquareTerminal size={18}/>账号登录与服务器终端<ChevronRight size={16}/></button><button onClick={async () => { try { const v = await post<{ url: string }>('/api/filebrowser-link', {}); await openManager(origin + v.url); } catch(e) { toast(String(e)); } }}><FolderOpen size={18}/>高级文件管理<ChevronRight size={16}/></button><button className="danger-text" onClick={async () => { try { await post('/api/logout', {}); } finally { await saveToken(''); setAuthenticated(false); setSettings(false); } }}><LogOut size={18}/>退出登录</button></div><p className="version-note">RoamDeck · {appVersion}<br/>Telegram 通知尚未配置</p></Sheet>}
+    {notice && <div className="toast" role="status">{notice}</div>}
+  </div>;
+}
+function CodeMark() { return <span className="code-mark">{'⌘'}</span>; }
+function Login({ done }: { done: () => void }) {
+  const [address, setAddress] = useState(origin), [username, setUsername] = useState('ubuntu'), [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function login(e: React.FormEvent) {
+    e.preventDefault(); setBusy(true); setError('');
+    try { setOrigin(address); const result = await post<{ token: string }>('/api/login', { username, password }); await saveToken(result.token); setPassword(''); done(); }
+    catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  }
+  return <div className="login-page"><div className="login-brand"><img src="/brand.svg" alt="RoamDeck 标识"/><strong>RoamDeck<span>随行台</span></strong></div><div className="login-card"><span className="eyebrow">YOUR WORKSPACE, ANYWHERE.</span><h1>工作不必等。<br/><span>工作台，随身带。</span></h1><p className="muted">连接你的服务器，继续手头的工作。</p><form onSubmit={e => void login(e)}><label className="field">服务器地址<div className="input-icon"><Server size={17}/><input type="url" autoCapitalize="none" autoCorrect="off" value={address} onChange={e => setAddress(e.target.value)} required/></div></label><label className="field">工作台账号<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required/></label><label className="field">密码<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入工作台密码" required/></label>{error && <div className="error-banner" role="alert">{error}</div>}<button className="primary full" disabled={busy}>{busy ? <LoaderCircle size={18} className="spin"/> : <ArrowRight size={18}/>} {busy ? '正在连接…' : '进入工作台'}</button></form><div className="login-security"><ShieldCheck size={14}/>加密连接 · 素材留在你的服务器</div></div><footer>AI、终端与文件，随时掌握。</footer></div>;
+}
+function Chat({ conversation, back, reference, clearReference, toast, status, manage }: { conversation: Conversation; back: () => void; reference?: FileEntry; clearReference: () => void; toast: (s: string) => void; status?: ServerStatus; manage: () => void }) {
+  const projectPath = useConversationPath(conversation);
+  const chat = useChat(conversation.sessionId, conversation.provider), [draft, setDraft] = useState(''), [details, setDetails] = useState(false), [model, setModel] = useState(''), [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const bottom = useRef<HTMLDivElement>(null), scroll = useRef<HTMLDivElement>(null), pinned = useRef(true);
+  useEffect(() => { if (pinned.current) bottom.current?.scrollIntoView({ behavior: 'smooth' }); }, [chat.events.length, chat.processing, chat.permissions.length]);
+  useEffect(() => { void cloud<{ models: unknown }>(`/providers/${conversation.provider}/models`).then(data => {
+    const raw = data.models; const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && 'availableModels' in raw && Array.isArray(raw.availableModels) ? raw.availableModels : [];
+    setModels(list.flatMap((value: unknown) => { if (!value || typeof value !== 'object') return []; const item = value as Record<string, unknown>; const id = item.id ?? item.value; return typeof id === 'string' ? [{ id, name: String(item.name ?? item.label ?? id) }] : []; }));
+  }).catch(() => setModels([])); }, [conversation.provider]);
+  function send() {
+    if (!draft.trim()) return;
+    try { const ref = reference ? `\n\n请参考服务器文件：${status?.projectPath.replace(/\/project$/, '/' + reference.root)}/${reference.path}` : ''; chat.message(draft.trim() + ref, model ? { model } : {}); setDraft(''); clearReference(); pinned.current = true; }
+    catch(e) { toast(String(e)); }
+  }
+  const messages = presentEvents(chat.events);
+  return <div className="chat-page"><div className="chat-heading"><button className="icon-button" aria-label="返回工作台" onClick={back}><ArrowLeft size={20}/></button><div><h2>{conversation.sessionTitle}</h2><span>{providerNames[conversation.provider]} <i/> {chat.connected ? chat.processing ? '正在工作' : '已连接' : '正在重连'}</span></div><button className="icon-button" aria-label="会话信息" onClick={() => setDetails(true)}><MoreHorizontal size={21}/></button></div>
+    <div className="chat-scroll" ref={scroll} onScroll={() => { if (scroll.current) pinned.current = scroll.current.scrollHeight - scroll.current.scrollTop - scroll.current.clientHeight < 100; }}>
+      {!messages.length && <div className="chat-welcome"><div className={'welcome-symbol ' + conversation.provider}>{conversation.provider === 'claude' ? '✳' : <CodeMark/>}</div><span className="eyebrow">LET'S GET TO WORK</span><h2>这次，想完成什么？</h2><p>描述目标，或指出需要处理的文件与项目。</p><div className="prompt-chips">{['检查项目，说明当前结构与状态', '帮我规划并实现一个新功能', '检查代码，提出修复与改进建议'].map(prompt => <button key={prompt} onClick={() => setDraft(prompt)}>{prompt}<ArrowUpRight size={15}/></button>)}</div></div>}
+      {messages.map((message, index) => <Message key={message.id ?? index} message={message}/>)}
+      {chat.processing && <div className="working-state"><span className="thinking-dots"><i/><i/><i/></span><span>正在处理，离开页面后任务继续。</span></div>}
+      {chat.error && <div className="error-banner">{chat.error}</div>}
+      <div ref={bottom}/>
+    </div>
+    {chat.permissions.map(permission => <div className="permission-card" key={permission.requestId}><div><ShieldCheck size={20}/><strong>需要你的批准</strong></div><p>{permission.toolName ?? '工具操作'}</p><pre>{JSON.stringify(permission.input ?? permission.toolInput, null, 2)}</pre><footer><button onClick={() => { try { chat.send({ type: 'chat.permission-response', requestId: permission.requestId, allow: false }); } catch(e) { toast(String(e)); } }}>拒绝</button><button className="primary" onClick={() => { try { chat.send({ type: 'chat.permission-response', requestId: permission.requestId, allow: true }); } catch(e) { toast(String(e)); } }}><Check size={16}/>允许本次</button></footer></div>)}
+    <div className="composer-wrap">{reference && <div className="reference-chip"><Paperclip size={14}/><span>{reference.name}</span><button aria-label="移除引用" onClick={clearReference}><X size={14}/></button></div>}<div className="composer"><textarea aria-label="给 AI 的消息" placeholder="描述任务、问题或需要修改的内容…" value={draft} onChange={e => setDraft(e.target.value)} rows={2} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}/><footer><span className="session-context-name"><FolderOpen size={14}/>{conversation.projectDisplayName}</span>{models.length > 0 && <select aria-label="选择模型" value={model} onChange={e => setModel(e.target.value)}><option value="">默认模型</option>{models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select>}{chat.processing ? <button className="send-button stop" aria-label="停止 AI" onClick={() => { try { chat.send({ type: 'chat.abort', sessionId: conversation.sessionId }); } catch(e) { toast(String(e)); } }}><Square size={16} fill="currentColor"/></button> : <button className="send-button" aria-label="发送消息" disabled={!draft.trim() || !chat.connected} onClick={send}><ArrowUp size={21}/></button>}</footer></div><p className="composer-note">AI 在服务器上工作 · 重要改动请审阅</p></div>
+    {details && <Sheet title="会话信息" close={() => setDetails(false)}><dl className="session-info"><dt>代理</dt><dd>{providerNames[conversation.provider]}</dd><dt>会话</dt><dd>{conversation.sessionId}</dd><dt>连接</dt><dd>{chat.connected ? '实时连接正常' : '正在恢复连接'}</dd><dt>项目</dt><dd>{conversation.projectDisplayName}</dd><dt>工作区</dt><dd>{projectPath || '读取目录…'}</dd><dt>工具审批</dt><dd>通过审批卡片处理命令与文件变更请求</dd></dl><div className="action-list"><button className="danger-text" onClick={() => { setDetails(false); manage(); }}>管理 / 删除会话<ChevronRight size={16}/></button></div></Sheet>}
+  </div>;
+}
+function presentEvents(events: ChatEvent[]) {
+  const out: ChatEvent[] = [];
+  for (const event of events) {
+    if (['complete', 'stream_end', 'permission_request', 'permission_resolved', 'permission_cancelled', 'session_created'].includes(event.kind)) continue;
+    if (event.kind === 'stream_delta') {
+      const previous = out.at(-1);
+      if (previous?.kind === 'stream_delta') previous.content = (previous.content ?? '') + (event.content ?? event.text ?? '');
+      else out.push({ ...event, content: event.content ?? event.text ?? '' });
+    } else {
+      if (event.kind === 'text' && event.role !== 'user' && out.at(-1)?.kind === 'stream_delta') out.pop();
+      if (event.id && out.some(e => e.id === event.id)) continue;
+      out.push({ ...event });
+    }
+  }
+  return out;
+}
+function Message({ message }: { message: ChatEvent }) {
+  if (['text', 'stream_delta'].includes(message.kind)) return <article className={'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message')}><span className="message-author">{message.role === 'user' ? '你' : 'AI 助手'}</span><div className="markdown"><Markdown>{message.content ?? message.text ?? ''}</Markdown></div></article>;
+  const label = message.kind === 'thinking' ? '思考过程' : message.kind === 'tool_use' ? message.toolName ?? '工具调用' : message.kind === 'tool_result' ? '工具结果' : message.kind === 'error' ? '运行出错' : message.kind === 'status' ? '运行状态' : message.kind === 'task_status' ? '后台任务状态' : message.kind;
+  return <details className={'tool-event ' + (message.kind === 'error' ? 'error-event' : '')}><summary><span>{message.kind === 'thinking' ? <Sparkles size={15}/> : <SquareTerminal size={15}/>}</span>{label}<ChevronDown size={14}/></summary><pre>{message.content ?? message.text ?? JSON.stringify(message.toolInput ?? message.toolResult ?? message, null, 2)}</pre></details>;
+}
+function JobsPage({ jobs, refresh, toast, openOutputs }: { jobs: Job[]; refresh: () => Promise<void>; toast: (s: string) => void; openOutputs: () => void }) {
+  const [filter, setFilter] = useState('all'), [selected, setSelected] = useState<Job>(), [log, setLog] = useState(''), [create, setCreate] = useState(false), [title, setTitle] = useState(''), [command, setCommand] = useState(''), [busy, setBusy] = useState(false);
+  useEffect(() => { if (!selected) return; let active = true; const load = () => void api<{ log: string }>(`/api/jobs/${selected.id}/log`).then(v => { if (active) setLog(v.log); }).catch(e => toast(String(e))); load(); const t = setInterval(load, 2000); return () => { active = false; clearInterval(t); }; }, [selected?.id]);
+  useEffect(() => { const t = setInterval(() => void refresh(), 4000); return () => clearInterval(t); }, [refresh]);
+  async function submit() {
+    setBusy(true); try { await post('/api/jobs', { title, command, cwd: { root: 'project', path: '' } }); setCreate(false); setTitle(''); setCommand(''); await refresh(); toast('任务已加入队列'); } catch(e) { toast(String(e)); } finally { setBusy(false); }
+  }
+  const visible = jobs.filter(j => filter === 'all' || (filter === 'active' ? ['running', 'queued', 'cancelling'].includes(j.status) : j.status === 'succeeded'));
+  return <div className="jobs-page"><div className="section-heading"><div><span className="eyebrow">GOOD THINGS TAKE A LITTLE TIME</span><h1>任务，在后台继续。</h1></div><button className="icon-button" aria-label="新建任务" onClick={() => setCreate(true)}><Plus size={22}/></button></div><p className="muted">放下手机，服务器会接着把事情做好。</p><div className="jobs-summary"><div><span className="running-orbit"><Layers3 size={25}/></span><span><strong>{jobs.filter(j => j.status === 'running').length} <small>个任务正在运行</small></strong><p>单任务队列 · 为服务器留出余量</p></span></div><button aria-label="查看输出目录" onClick={openOutputs}><ArrowUpRight size={20}/></button></div><div className="filter-tabs">{[['all', '全部'], ['active', '进行中'], ['done', '已完成']].map(([id, label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}</button>)}</div>
+    {visible.length ? <div className="job-list">{visible.map(job => <button className="job-card" key={job.id} onClick={() => { setSelected(job); setLog(''); }}><div className={'job-status-icon ' + job.status}>{job.status === 'running' || job.status === 'cancelling' ? <LoaderCircle className="spin" size={22}/> : job.status === 'succeeded' ? <Check size={22}/> : <Clock3 size={22}/>}</div><div><span className={'job-status ' + job.status}>{statusNames[job.status]}</span><h3>{job.title}</h3><p>{new Date(job.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · {job.cwd.root}</p></div><ChevronRight size={17}/></button>)}</div> : <div className="empty jobs-empty"><Layers3 size={37}/><h3>这里还没有任务。</h3><p>提交检查、构建或其他命令，在这里查看进度。</p><button className="primary" onClick={() => setCreate(true)}><Plus size={16}/>新建后台任务</button></div>}
+    {create && <Sheet title="新建后台任务" close={() => setCreate(false)}><label className="field">任务名称<input value={title} onChange={e => setTitle(e.target.value)} placeholder="例如：运行项目检查"/></label><label className="field">执行命令<textarea value={command} onChange={e => setCommand(e.target.value)} rows={4} placeholder="命令将在项目目录中执行"/></label><button className="recipe-button" onClick={() => { setTitle('检查运行环境'); setCommand('node --version; python3 --version; git --version; df -h .'); }}><Cpu size={16}/>填入环境检查命令</button><p className="inline-note">任务独立运行，关闭 App 后继续。日志与状态会保留。</p><button className="primary full" disabled={!title.trim() || !command.trim() || busy} onClick={() => void submit()}><Play size={16}/>加入队列</button></Sheet>}
+    {selected && <Sheet title={selected.title} close={() => setSelected(undefined)}><div className="job-detail-meta"><span>{statusNames[jobs.find(j => j.id === selected.id)?.status ?? selected.status]}</span><span>{selected.cwd.root}</span></div><pre className="job-command">$ {selected.command}</pre><pre className="job-log">{log || '等待任务输出…'}</pre><div className="job-detail-actions"><button onClick={openOutputs}><FolderOpen size={16}/>查看输出</button>{['running', 'queued'].includes(jobs.find(j => j.id === selected.id)?.status ?? '') && <button className="danger-text" onClick={async () => { try { await post(`/api/jobs/${selected.id}/cancel`, {}); await refresh(); } catch(e) { toast(String(e)); } }}><Square size={14}/>取消任务</button>}</div></Sheet>}
+  </div>;
+}

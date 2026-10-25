@@ -1,0 +1,82 @@
+import { _android } from 'playwright';
+import { readFile, writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const exec = promisify(execFile);
+const credentials = JSON.parse(await readFile('private/access.json', 'utf8'));
+const device = (await _android.devices()).find(value => value.serial() === 'emulator-5554');
+if (!device) throw new Error('Isolated emulator is not running');
+const directory = '终端验收-' + Date.now();
+let page, initCount = 0, sessionId = '', token;
+const call = async (url, body) => {
+  const response = await fetch(credentials.url + url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(body) });
+  const data = await response.json(); assert.ok(response.ok, JSON.stringify(data)); return data;
+};
+const until = async condition => { for (let i = 0; i < 100; i++) { if (await condition()) return; await new Promise(resolve => setTimeout(resolve, 100)); } throw new Error('Native condition timeout'); };
+try {
+  device.setDefaultTimeout(25000);
+  ({ token } = await call('/api/login', credentials));
+  await call('/api/files/folder', { root: 'inputs', path: directory });
+  await device.shell('am force-stop xyz.leechyi.compileverse');
+  await device.shell('am start -n xyz.leechyi.compileverse/.MainActivity');
+  page = await (await device.webView({ pkg: 'xyz.leechyi.compileverse' })).page();
+  await page.getByRole('heading', { name: '工作，随时接续。' }).waitFor();
+  page.on('websocket', ws => {
+    if (!ws.url().includes('/ws/terminal')) return;
+    ws.on('framesent', frame => { try { const message = JSON.parse(String(frame.payload)); if (message.type === 'init') { initCount++; sessionId = message.sessionId; } } catch {} });
+  });
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '文件', exact: true }).click();
+  await page.getByRole('button', { name: '输入文件', exact: true }).first().click();
+  await page.getByRole('button', { name: new RegExp('^' + directory) }).first().click();
+  await page.getByRole('button', { name: '在此打开终端', exact: true }).click();
+  await page.getByText('已连接', { exact: true }).waitFor(); await page.waitForTimeout(800);
+  const dimensions = () => page.locator('.terminal-screen').evaluate(node => ({ cols: Number(node.dataset.cols), rows: Number(node.dataset.rows) }));
+  const run = async text => { await page.getByLabel('命令编辑器，支持粘贴与多行输入').fill(text); await page.getByRole('button', { name: '执行命令', exact: true }).click(); };
+  const verifySize = async () => {
+    assert.match(sessionId, /^cv-[a-zA-Z0-9]+$/);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await page.waitForTimeout(150);
+      const value = await dimensions();
+      const { stdout } = await exec('ssh', ['-o', 'BatchMode=yes', 'ubuntu@safe.leechyi.xyz', `tmux display-message -p -t ${sessionId} '#{pane_width} #{pane_height}'`]);
+      const [cols, rows] = stdout.trim().split(' ').map(Number);
+      if (cols === value.cols && rows === value.rows) return value;
+    }
+    throw new Error('Server tmux dimensions did not match the client after layout settled');
+  };
+  const initial = await verifySize();
+  const fits = async () => { const result = await page.evaluate(() => { const screen = document.querySelector('.xterm-screen').getBoundingClientRect(), viewport = document.querySelector('.terminal-scroll').getBoundingClientRect(); return screen.right <= viewport.right + 1; }); assert.equal(result, true, 'Rightmost terminal column is clipped'); };
+  await fits();
+  await page.getByLabel('终端宽度', { exact: true }).selectOption('80');
+  await until(async () => (await dimensions()).cols === 80); await page.waitForTimeout(300);
+  const fixed = await verifySize();
+  const python = "import os,sys; c,r=os.get_terminal_size(); sys.stdout.write('\\x1b[?1049h\\x1b[2J'); [sys.stdout.write(f'\\x1b[{n};1H|'+('-'*(c-2) if n in [1,r-1] else ' '*(c-2))+'|') for n in range(1,r)]; sys.stdout.write(f'\\x1b[4;{c-9}H\\x1b[97;41mRIGHT_EDGE\\x1b[0m\\x1b[{r};1H'); sys.stdout.flush(); input(); sys.stdout.write('\\x1b[?1049l'); sys.stdout.flush()";
+  await run('python3 -c ' + "'" + python.replace(/'/g, "'\\''") + "'");
+  await page.waitForTimeout(500);
+  await page.getByRole('button', { name: '终端全屏', exact: true }).click();
+  const slider = page.getByRole('slider', { name: '终端横向位置' });
+  await slider.focus(); await slider.press('Home');
+  const rect = await page.locator('.terminal-scroll').evaluate(node => { const r = node.getBoundingClientRect(); return { left: r.left, right: r.right, y: r.top + 55, dpr: devicePixelRatio }; });
+  await device.shell(`input swipe ${Math.round((rect.right - 25) * rect.dpr)} ${Math.round(rect.y * rect.dpr)} ${Math.round((rect.left + 25) * rect.dpr)} ${Math.round(rect.y * rect.dpr)} 500`);
+  await until(() => page.locator('.terminal-scroll').evaluate(node => node.scrollLeft > 50));
+  await slider.focus(); await slider.press('End'); await fits();
+  await device.screenshot({ path: 'artifacts/native-terminal-right-edge.png' });
+  await page.getByRole('button', { name: '回车', exact: true }).click();
+  await page.getByLabel('终端宽度', { exact: true }).selectOption('120');
+  await until(async () => (await dimensions()).cols === 120); await page.waitForTimeout(300);
+  await verifySize();
+  await device.shell('settings put system accelerometer_rotation 0');
+  await device.shell('settings put system user_rotation 1');
+  await until(() => page.evaluate(() => innerWidth > innerHeight));
+  await page.getByLabel('终端宽度', { exact: true }).selectOption('fit'); await page.waitForTimeout(400); await fits();
+  const landscape = await verifySize();
+  await device.screenshot({ path: 'artifacts/native-terminal-landscape.png' });
+  await device.shell('settings put system user_rotation 0');
+  await until(() => page.evaluate(() => innerHeight > innerWidth));
+  await page.waitForTimeout(400); await fits();
+  assert.equal(initCount, 1, 'Changing display modes restarted the terminal');
+  await page.getByRole('button', { name: '命令编辑器', exact: false }).click();
+  await run('exit');
+  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'one PTY init across mode changes'], realPhoneTested: false };
+  await writeFile('artifacts/terminal-revision-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
+} finally { await device.shell('settings put system user_rotation 0').catch(() => {}); await device.close(); }

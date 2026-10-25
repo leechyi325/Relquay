@@ -1,0 +1,41 @@
+node_modules/
+dist/
+.runtime/
+.state/
+.env
+android/.gradle/
+android/local.properties
+android/**/build/
+android/.idea/
+artifacts/
+private/
+.DS_Store
+._*
+.env.*
+!.env.example
+*.log
+*.pem
+*.key
+*.keystore
+*.jks
+*.crt
+*.p12
+android/app/google-services.json
+/.workspace/
+android/captures/
+# Generated Capacitor assets; recreated by npm run android:sync.
+android/app/src/main/assets/
+android/capacitor-cordova-android-plugins/
+# Instance-specific video-project checks stay outside the tool repository.
+/scripts/check-media.mjs
+/scripts/check-html.mjs
+/scripts/emulator-proxy.mjs
+# Keep production source/content trees out if copied here accidentally.
+/assets/
+/content/
+/toolchains/
+*.mp4
+*.mov
+*.webm
+*.wav
+*.mp3

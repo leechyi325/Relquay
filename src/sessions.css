@@ -1,0 +1,21 @@
+.session-location>span{display:block;font-size:11px;color:#7b8b7e;margin-bottom:9px}
+.directory-button{display:flex;align-items:center;gap:10px;border:1px solid #dde2d5;border-radius:10px;min-height:52px;padding:10px 12px;width:100%;background:#fffefa;text-align:left}
+.directory-button code{flex:1;overflow-wrap:anywhere;font-size:11px;line-height:1.7}
+.folder-option{display:flex;align-items:center;gap:8px;font-size:12px;min-height:48px}
+.folder-option input{width:18px;height:18px;accent-color:#b45e3c;flex-shrink:0}
+.sheet .inline-note code{display:block;margin-top:5px;overflow-wrap:anywhere}
+.directory-current{font-size:11px;color:#879480;overflow-wrap:anywhere;margin:15px 0}
+.directory-list{max-height:38dvh;overflow:auto;margin:10px 0 20px}
+.directory-list>button{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;border-bottom:1px solid #e7e8e1;font-size:13px;text-align:left}
+.directory-list>button span{flex:1;overflow-wrap:anywhere}
+.directory-list .empty{padding:25px}
+.conversation-list .conversation-row{display:flex;align-items:center;border-bottom:1px solid #e7e8e1;min-width:0}
+.conversation-list .conversation-row:last-child{border-bottom:0}
+.conversation-row>.conversation-open{display:flex;align-items:center;gap:13px;text-align:left;flex:1;min-width:0;padding:15px 8px 15px 15px}
+.conversation-row>.icon-button{width:42px;min-width:42px;margin-right:5px;color:#909e8c}
+.delete-explanation{font-size:13px;line-height:1.9;color:#7b8b7e}
+.session-confirm-actions{display:flex;justify-content:flex-end;align-items:center;gap:15px}
+.session-confirm-actions>button{padding:0 16px;font-size:13px}
+.danger-action{background:#a34e3b}
+.session-context-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%}
+.art-brand{width:75%;max-width:110px;aspect-ratio:1;align-self:center}
