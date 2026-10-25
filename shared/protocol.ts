@@ -1,8 +1,16 @@
 import { z } from 'zod';
 
 export const roots = ['project', 'inputs', 'outputs', 'logs'] as const;
-export type RootId = typeof roots[number];
-export const locationSchema = z.object({ root: z.enum(roots).default('project'), path: z.string().max(4096).default('') });
+export type RootId = string;
+export const rootIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
+export const locationSchema = z.object({ root: rootIdSchema.default('project'), path: z.string().max(4096).default('') });
+export const fileModuleSchema = z.object({ id: rootIdSchema, name: z.string().trim().min(1).max(60), folders: z.array(z.object({ id: rootIdSchema, name: z.string().trim().min(1).max(100), path: z.string().min(1).max(4096) })).min(1).max(30) });
+export type FileModule = z.infer<typeof fileModuleSchema>;
+export type FileRoot = FileModule['folders'][number] & { moduleId: string; moduleName: string };
+export type AgentModel = { id: string; name: string; description?: string; efforts: string[]; defaultEffort?: string; isDefault?: boolean; images?: boolean };
+export const attachmentSchema = z.union([z.object({ uploadId: z.string().uuid() }), locationSchema]);
+export type AttachmentReference = z.infer<typeof attachmentSchema>;
+export type ChatAttachment = { id: string; name: string; size: number; mime: string; reference: AttachmentReference; source: 'phone' | 'server' };
 export type FileLocation = z.infer<typeof locationSchema>;
 export type FileEntry = FileLocation & { name: string; directory: boolean; size: number; modified: number; mime: string };
 export type Provider = 'claude' | 'codex';
@@ -41,10 +49,11 @@ export function reduceChat(state: ChatState, event: ChatEvent): ChatState {
       next.permissions = state.permissions.filter(e => e.requestId !== event.requestId); break;
     case 'complete': next.processing = false; next.permissions = []; break;
     case 'protocol_error': next.error = String(event.message ?? event.content ?? '会话连接错误'); next.processing = false; break;
+    case 'interaction_error': next.error = String(event.content ?? '回应未被接受'); break;
     default: if (event.kind !== 'session_upserted' && event.kind !== 'loading_progress') next.processing = true;
   }
   if (event.kind !== 'session_upserted' && event.kind !== 'loading_progress') {
-    const optimistic = event.kind === 'text' && event.role === 'user' ? state.events.findIndex(e => e.optimistic === true && e.content === event.content) : -1;
+    const optimistic = event.kind === 'text' && event.role === 'user' ? state.events.findIndex(e => e.optimistic === true) : -1;
     next.events = optimistic >= 0 ? state.events.map((e, i) => i === optimistic ? event : e) : [...state.events, event].slice(-2000);
   }
   return next;

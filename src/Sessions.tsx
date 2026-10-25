@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronRight, Folder, FolderOpen, LoaderCircle, Trash2 } from 'lucide-react';
 import { api, cloud, params, post } from './api';
-import { Sheet, rootNames } from './Files';
+import { Sheet } from './Files';
+import { useRootNames } from './file-roots';
 import type { Conversation, ConversationCreate, FileEntry, FileLocation, Provider } from '../shared/protocol';
 
 export function NewSession({ provider, setProvider, initialCwd, created, close }: { provider: Provider; setProvider: (value: Provider) => void; initialCwd: FileLocation; created: (value: Conversation) => void; close: () => void }) {
-  const [cwd, setCwd] = useState(initialCwd), [name, setName] = useState('默认项目'), [title, setTitle] = useState(''), [createDirectory, setCreateDirectory] = useState(false), [picker, setPicker] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const rootNames = useRootNames();
+  const [cwd, setCwd] = useState<FileLocation>(rootNames[initialCwd.root] ? initialCwd : { root: Object.keys(rootNames)[0] ?? 'project', path: '' }), [name, setName] = useState('默认项目'), [title, setTitle] = useState(''), [createDirectory, setCreateDirectory] = useState(false), [picker, setPicker] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [directories, setDirectories] = useState<{ id: string; path: string }[]>([]);
   const [projects, setProjects] = useState<{ fullPath: string; displayName: string }[]>([]), [loaded, setLoaded] = useState(false);
   const editedName = useRef(false);
@@ -33,6 +35,7 @@ export function NewSession({ provider, setProvider, initialCwd, created, close }
 }
 
 function DirectoryPicker({ value, choose, close }: { value: FileLocation; choose: (value: FileLocation) => void; close: () => void }) {
+  const rootNames = useRootNames();
   const [current, setCurrent] = useState(value), [entries, setEntries] = useState<FileEntry[]>([]), [error, setError] = useState(''), [loading, setLoading] = useState(false);
   useEffect(() => {
     let live = true; setLoading(true); setError('');

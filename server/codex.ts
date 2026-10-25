@@ -5,12 +5,14 @@ import { createInterface } from 'node:readline';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { WebSocket } from 'ws';
-import { decodeEvent, type ChatEvent } from '../shared/protocol.ts';
+import { decodeEvent, type ChatEvent, type AgentModel } from '../shared/protocol.ts';
+import { nativeImage, withFileReferences, type ResolvedAttachment } from './attachments.ts';
+import { validateModel } from './models.ts';
 import { HttpError } from './files.ts';
 import { appVersion } from '../shared/config.ts';
 
 type Session = { id: string; cwd: string; threadId?: string; turnId?: string; seq: number; processing: boolean; events: ChatEvent[] };
-type Approval = { rpcId: string | number; sessionId: string; event: ChatEvent };
+type Approval = { rpcId: string | number; sessionId: string; event: ChatEvent; questions?: boolean };
 const rpcSchema = z.object({ id: z.union([z.string(), z.number()]).optional(), method: z.string().optional(), params: z.record(z.string(), z.unknown()).optional(), result: z.unknown().optional(), error: z.object({ message: z.string() }).passthrough().optional() });
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 
@@ -19,6 +21,7 @@ export class CodexBridge {
   sessions = new Map<string, Session>(); approvals = new Map<string, Approval>();
   private listeners = new Map<string, Set<WebSocket>>(); private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   private child?: ChildProcessWithoutNullStreams; private starting?: Promise<void>; private requestId = 0; private loaded = new Set<string>();
+  private modelCache?: { expires: number; data: AgentModel[] };
   constructor(private directory: string, private command = 'codex', private args = ['app-server', '--listen', 'stdio://']) {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const file = path.join(directory, 'sessions.json');
@@ -99,11 +102,27 @@ export class CodexBridge {
     for (const [id, p] of this.approvals) if (p.sessionId === session.id) { this.approvals.delete(id); this.emit(session, { kind: 'permission_cancelled', requestId: id }); }
     this.emit(session, { kind: 'complete', success }); this.persist();
   }
-  async send(id: string, content: string, options: Record<string, unknown> = {}) {
+  async models(): Promise<AgentModel[]> {
+    if (this.modelCache && this.modelCache.expires > Date.now()) return this.modelCache.data;
+    await this.start();
+    const data: AgentModel[] = []; let cursor: string | undefined;
+    do {
+      const result = await this.request<{ data: { id: string; model: string; displayName: string; hidden?: boolean; isDefault?: boolean; description?: string; defaultReasoningEffort?: string; supportedReasoningEfforts: { reasoningEffort: string }[]; inputModalities?: string[] }[]; nextCursor?: string | null }>('model/list', { limit: 100, ...(cursor ? { cursor } : {}) });
+      data.push(...result.data.filter(item => !item.hidden).map(item => ({ id: item.model || item.id, name: item.displayName, description: item.description, efforts: item.supportedReasoningEfforts.map(e => e.reasoningEffort), defaultEffort: item.defaultReasoningEffort, isDefault: item.isDefault, images: !item.inputModalities || item.inputModalities.includes('image') })));
+      cursor = result.nextCursor ?? undefined;
+    } while (cursor && data.length < 1000);
+    this.modelCache = { data, expires: Date.now() + 60000 }; return data;
+  }
+  async send(id: string, content: string, options: Record<string, unknown> = {}, attachments: ResolvedAttachment[] = []) {
     const session = this.sessions.get(id); if (!session) throw new HttpError(404, '会话不存在');
     if (session.processing) throw new HttpError(409, '当前会话仍在运行');
+    const model = typeof options.model === 'string' ? options.model : undefined, effort = typeof options.effort === 'string' ? options.effort : undefined;
+    const selected = validateModel(await this.models(), model, effort);
+    if (session.processing) throw new HttpError(409, '当前会话仍在运行');
+    if (attachments.some(nativeImage) && selected?.images === false) throw new HttpError(400, '所选模型不支持图片输入');
+    if (attachments.some(item => nativeImage(item) && item.size > 20 * 1024 * 1024)) throw new HttpError(413, '模型图片输入最大为 20MB');
     session.processing = true; this.persist();
-    this.emit(session, { kind: 'text', role: 'user', content });
+    this.emit(session, { kind: 'text', role: 'user', content, attachments: attachments.map(({ name, size, mimeType }) => ({ name, size, mime: mimeType })) });
     try {
       await this.start();
       const config = { cwd: session.cwd, approvalPolicy: 'on-request', sandbox: 'workspace-write', ...(typeof options.model === 'string' ? { model: options.model } : {}) };
@@ -113,7 +132,7 @@ export class CodexBridge {
       } else if (!this.loaded.has(session.threadId)) {
         await this.request('thread/resume', { threadId: session.threadId, excludeTurns: true, ...config }); this.loaded.add(session.threadId);
       }
-      const result = await this.request<{ turn: { id: string } }>('turn/start', { threadId: session.threadId, input: [{ type: 'text', text: content }], ...(typeof options.model === 'string' ? { model: options.model } : {}) });
+      const result = await this.request<{ turn: { id: string } }>('turn/start', { threadId: session.threadId, input: [{ type: 'text', text: withFileReferences(content, attachments) }, ...attachments.filter(nativeImage).map(item => ({ type: 'localImage', path: item.path }))], model: model ?? selected?.id ?? null, effort: effort ?? selected?.defaultEffort ?? null });
       session.turnId = result.turn.id; this.persist();
     } catch(e) { if (session.processing) this.finish(session, false, String(e)); }
   }
@@ -121,9 +140,10 @@ export class CodexBridge {
     const s = this.sessions.get(id);
     if (s?.processing && s.threadId && s.turnId) await this.request('turn/interrupt', { threadId: s.threadId, turnId: s.turnId });
   }
-  approve(requestId: string, allow: boolean) {
+  approve(requestId: string, allow: boolean, answers?: Record<string, { answers: string[] }>) {
     const approval = this.approvals.get(requestId); if (!approval) return false;
-    this.write({ id: approval.rpcId, result: { decision: allow ? 'accept' : 'decline' } });
+    if (approval.questions && allow && !answers) throw new HttpError(400, '请填写问题后提交');
+    this.write({ id: approval.rpcId, result: approval.questions ? { answers: allow ? answers : {} } : { decision: allow ? 'accept' : 'decline' } });
     this.approvals.delete(requestId); const session = this.sessions.get(approval.sessionId)!;
     this.emit(session, { kind: 'permission_resolved', requestId }); return true;
   }
@@ -138,9 +158,14 @@ export class CodexBridge {
     const p = frame.params ?? {}, threadId = String(p.threadId ?? record(p.thread).id ?? '');
     const session = [...this.sessions.values()].find(s => s.threadId === threadId);
     if (frame.id !== undefined && frame.method) {
-      if (session && ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(frame.method)) {
-        const requestId = `codex:${frame.id}`;
-        const event = this.emit(session, { kind: 'permission_request', requestId, toolName: frame.method.includes('commandExecution') ? '执行命令' : '修改文件', input: p });
+      if (session && frame.method === 'item/tool/requestUserInput') {
+        const requestId = `codex:${crypto.randomUUID()}`;
+        const event = this.emit(session, { kind: 'permission_request', requestId, toolName: '回答问题', interaction: 'questions', input: p });
+        this.approvals.set(requestId, { rpcId: frame.id, sessionId: session.id, event, questions: true });
+      } else if (session && ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(frame.method)) {
+        const requestId = `codex:${crypto.randomUUID()}`;
+        const item = session.events.findLast(event => event.kind === 'tool_use' && event.toolId === p.itemId);
+        const event = this.emit(session, { kind: 'permission_request', requestId, toolName: frame.method.includes('commandExecution') ? '执行命令' : '修改文件', input: { ...record(item?.toolInput), ...p } });
         this.approvals.set(requestId, { rpcId: frame.id, sessionId: session.id, event });
       } else {
         // Never silently approve unsupported requests or user-input forms.
@@ -165,7 +190,7 @@ export class CodexBridge {
       case 'turn/completed': this.finish(session, record(p.turn).status === 'completed', record(p.turn).error ? JSON.stringify(record(p.turn).error) : undefined); break;
       case 'error': this.emit(session, { kind: 'error', content: String(record(p.error).message ?? 'Codex 运行出错') }); break;
       case 'serverRequest/resolved': {
-        const requestId = `codex:${p.requestId}`; this.approvals.delete(requestId); this.emit(session, { kind: 'permission_resolved', requestId }); break;
+        const requestId = [...this.approvals].find(([, approval]) => approval.rpcId === p.requestId)?.[0]; if (requestId) { this.approvals.delete(requestId); this.emit(session, { kind: 'permission_resolved', requestId }); } break;
       }
       default:
         if (!frame.method?.startsWith('codex/event/')) this.emit(session, { kind: 'status', content: frame.method, details: p });

@@ -3,16 +3,19 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CornerDownLeft, Maximize2, Minimize2, Minus, Play, Plus, RefreshCw, SquareTerminal } from 'lucide-react';
-import { socket, openExternal } from './api';
+import { socket, openExternal, post, origin } from './api';
+import { useFileModules } from './file-roots';
 import type { FileLocation, ServerStatus } from '../shared/protocol';
 import '@xterm/xterm/css/xterm.css';
 export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: ServerStatus; toast: (s: string) => void }) {
+  const { roots } = useFileModules();
+  const effectiveRoot = roots.some(root => root.id === cwd.root) ? cwd.root : roots[0]?.id ?? cwd.root;
   const host = useRef<HTMLDivElement>(null), viewport = useRef<HTMLDivElement>(null), term = useRef<XTerm>(null), connection = useRef<WebSocket>(null);
   const resize = useRef<() => void>(() => {}), width = useRef('fit'), size = useRef(12);
   const [mode, setMode] = useState('fit'), [fontSize, setFontSize] = useState(12), [fullscreen, setFullscreen] = useState(false), [editor, setEditor] = useState(true);
   const [dimensions, setDimensions] = useState({ cols: 0, rows: 0 }), [pan, setPan] = useState({ value: 0, max: 0 });
   const ctrl = useRef(false), [control, setControl] = useState(false), [ready, setReady] = useState(false), [command, setCommand] = useState(''), [reconnect, setReconnect] = useState(0);
-  const [history, setHistory] = useState<string[]>(() => JSON.parse(localStorage.getItem('studio.commands') ?? '[]'));
+  const [history, setHistory] = useState<string[]>(() => JSON.parse(localStorage.getItem('studio.commands:' + origin) ?? '[]'));
   const write = (data: string) => { if (connection.current?.readyState === WebSocket.OPEN) connection.current.send(JSON.stringify({ type: 'input', data })); else toast('终端尚未连接'); };
   useEffect(() => {
     if (!host.current || !viewport.current || !status) return;
@@ -62,19 +65,22 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
       try {
         const ws = await socket('terminal'); if (disposed) { ws.close(); return; } connection.current = ws;
         ws.onopen = async () => {
-          delay = 1000; setReady(true); layout();
-          const projectPath = status.projectPath.replace(/\/project$/, '/' + cwd.root) + (cwd.path ? '/' + cwd.path : '');
+          try {
+          delay = 1000; layout();
+          const resolved = await post<{ path: string; terminalRc: string }>('/api/files/resolve', { root: effectiveRoot, path: effectiveRoot === cwd.root ? cwd.path : '' });
+          const projectPath = resolved.path;
           const encoded = new TextEncoder().encode(cwd.root + '/' + cwd.path);
           const digest = await crypto.subtle.digest('SHA-256', encoded);
           if (disposed || ws.readyState !== WebSocket.OPEN) return;
           const legacy = btoa(unescape(encodeURIComponent(cwd.root + '/' + cwd.path))).replace(/[^a-zA-Z0-9]/g, '');
           const session = 'cv-' + (legacy.length <= 32 ? legacy : Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('').slice(0, 32));
           const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
-          const rc = status.projectPath.replace(/\/project$/, '/studio/terminal.rc');
+          const rc = resolved.terminalRc;
           const shell = `bash --rcfile ${quote(rc)} -i`;
           ws.send(JSON.stringify({ type: 'init', projectPath, sessionId: session, provider: 'plain-shell', isPlainShell: true, initialCommand: `tmux new-session -A -s ${session} -c ${quote(projectPath)} ${quote(shell)} \\; set-option -t ${session} status off \\; set-window-option -t ${session} window-size latest`, cols: terminal.cols, rows: terminal.rows, colorScheme: 'dark' }));
+          } catch(e) { if (!disposed) toast(String(e)); ws.close(); }
         };
-        ws.onmessage = e => { try { const value = JSON.parse(e.data); if (value.type === 'output') terminal.write(value.data); } catch {} };
+        ws.onmessage = e => { try { const value = JSON.parse(e.data); if (value.type === 'output') { terminal.write(value.data); setReady(true); } } catch {} };
         ws.onclose = () => { setReady(false); if (!disposed) { timer = setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); } };
         ws.onerror = () => ws.close();
       } catch(e) { if (!disposed) { timer = setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); } }
@@ -85,7 +91,7 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
       connection.current?.close(); observer.disconnect(); window.removeEventListener('resize', schedule); window.visualViewport?.removeEventListener('resize', schedule);
       scroller.removeEventListener('touchstart', touchStart, true); scroller.removeEventListener('touchmove', touchMove, true); terminal.dispose(); term.current = null;
     };
-  }, [cwd.root, cwd.path, status?.projectPath, reconnect]);
+  }, [effectiveRoot, cwd.root, cwd.path, status?.projectPath, reconnect]);
   useEffect(() => { width.current = mode; size.current = fontSize; resize.current(); }, [mode, fontSize, fullscreen, editor]);
   useEffect(() => {
     if (!fullscreen) return;
@@ -97,7 +103,7 @@ export function Terminal({ cwd, status, toast }: { cwd: FileLocation; status?: S
     if (!ready) { toast('终端尚未连接'); return; }
     write(text + '\r'); setCommand('');
     if (fullscreen) { (document.activeElement as HTMLElement | null)?.blur(); setEditor(false); }
-    const next = [text, ...history.filter(e => e !== text)].slice(0, 12); setHistory(next); localStorage.setItem('studio.commands', JSON.stringify(next));
+    const next = [text, ...history.filter(e => e !== text)].slice(0, 12); setHistory(next); localStorage.setItem('studio.commands:' + origin, JSON.stringify(next));
   }
   return <div className={'terminal-page ' + (fullscreen ? 'is-fullscreen' : '')}>
     <div className="section-heading"><div><span className="eyebrow">SERVER TERMINAL</span><h1>随手掌控。</h1></div><button className="icon-button" aria-label="重新连接终端" onClick={() => setReconnect(v => v + 1)}><RefreshCw size={19}/></button></div>

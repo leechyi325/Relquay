@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cloud, socket } from './api';
-import { decodeEvent, emptyChat, reduceChat, type ChatState, type ChatEvent } from '../shared/protocol';
+import { decodeEvent, emptyChat, reduceChat, type ChatState, type ChatEvent, type ChatAttachment } from '../shared/protocol';
 
 export function useChat(sessionId?: string, provider?: string) {
   const [state, setState] = useState<ChatState>(emptyChat), [connected, setConnected] = useState(false);
@@ -41,9 +41,9 @@ export function useChat(sessionId?: string, provider?: string) {
     if (ws.current?.readyState !== WebSocket.OPEN) throw new Error('会话正在重连，请稍后发送');
     ws.current.send(JSON.stringify(value));
   }
-  function message(content: string, options: Record<string, unknown> = {}) {
+  function message(content: string, options: Record<string, unknown> = {}, attachments: ChatAttachment[] = []) {
     send({ type: 'chat.send', sessionId, content, options: { permissionMode: 'default', ...options } });
-    setState(s => ({ ...s, lastSeq: provider === 'codex' ? s.lastSeq : 0, processing: true, error: undefined, events: [...s.events, { kind: 'text', role: 'user', content, id: crypto.randomUUID(), optimistic: true }] }));
+    setState(s => ({ ...s, lastSeq: provider === 'codex' ? s.lastSeq : 0, processing: true, error: undefined, events: [...s.events, { kind: 'text', role: 'user', content, attachments: attachments.map(({ name, size, mime }) => ({ name, size, mime })), id: crypto.randomUUID(), optimistic: true }] }));
   }
   return { ...state, connected, message, send };
 }

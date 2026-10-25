@@ -74,3 +74,17 @@ Terminal layout changes must assert the rightmost cell is visible in fit mode an
 - Correct: persist names through CloudCLI; use a zero-padding measurement surface and reachable scroll viewport; resize the existing PTY; show explicit approvals and errors.
 
 Dependency versions are pinned in the app and upstream lock files. Native package identity and existing service paths remain stable during the product rename to preserve upgrades.
+
+## 8. Workspace 0.2 contracts
+
+- Each normalized HTTPS origin owns an independent token slot. Android encrypts each slot using AES-GCM and Android Keystore; web uses origin-keyed sessionStorage. The legacy single-token slot migrates once. Switching remounts the workspace and closes old sockets. Login completion writes to its captured origin, even if selection changed while the request was pending.
+- `GET /api/file-modules` returns `FileModule[] {id,name,folders:[{id,name,path}]}`; `PUT /api/file-modules/:id` validates/persists a module; `DELETE` removes only its mapping. `GET /api/roots` flattens folders into stable root IDs with module metadata. Old project/inputs/outputs/logs IDs survive migration.
+- `GET /api/directories?path` browses allowed real directories (home/base by default, override with STUDIO_BROWSE_ROOTS). `POST /api/files/resolve {root,path}` supplies actual path and terminal rc; never reconstruct custom paths by replacing `/project`.
+- Preview capabilities carry a hash of the canonical bound directory. Relabeling preserves them; rebinding invalidates them with 410. Active job references block remapping/removal, with active state checked after asynchronous directory validation.
+- `POST /api/chat/attachments` accepts one multipart file up to 512MB and returns a `ChatAttachment` containing an opaque uploadId. Files live in state/attachments/UUID with private metadata. Client messages send at most ten checked `{uploadId}` or `{root,path}` references, never arbitrary local paths.
+- For Claude native image input, verified images are copied into the upstream `~/.cloudcli/assets` direct-child store because CloudCLI rejects image descriptors elsewhere. General files use checked absolute paths. Codex uses `localImage` items. SVG and other unsupported native image types remain file references.
+- `GET /api/agents/:provider/models` returns normalized `AgentModel[] {id,name,efforts,defaultEffort,isDefault,images}`. CloudCLI 1.37.5 returns `data.models.OPTIONS`, not an array. Codex model/list uses `supportedReasoningEfforts`; turn/start uses `effort`. Validate against the current catalog before sending. No hard-coded model or effort catalog in the UI.
+- Pending Codex approvals use unique client request IDs separate from RPC IDs. `chat.permission-response` carries allow plus optional answers keyed by question ID (`{answers:string[]}`). Claude AskUserQuestion instead carries updatedInput with answers keyed by question text (multi-selection joined with comma + space). Unknown question shapes cannot be approved through a generic card.
+- `STUDIO_CLIENT_ORIGINS` explicitly extends REST/WebSocket CORS for browser clients hosted elsewhere. Do not allow arbitrary origins or move tokens into URLs to make multi-server work.
+
+Evidence: pinned CloudCLI 1.37.5 runtime/types and installed Codex 0.164.0 generated schema; official [Codex App Server](https://developers.openai.com/codex/app-server). Tests in workspace.test.ts and check-ui.mjs cover real data flow with protocol fixtures; check-workspace-remote.mjs and check-native.mjs cover Oracle/Android without claiming model inference.

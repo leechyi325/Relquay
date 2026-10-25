@@ -18,10 +18,10 @@ export function assertInside(root: string, target: string) {
   if (target !== root && !target.startsWith(root + path.sep)) throw new HttpError(403, '路径超出工作目录');
 }
 export class Files {
-  constructor(public base: string) {}
+  constructor(public base: string, private rootPath: (id: string) => string = id => { if (!roots.includes(id as typeof roots[number])) throw new HttpError(400, '无效目录'); return path.join(base, id); }) {}
   async resolve(location: FileLocation, allowMissing = false): Promise<string> {
-    if (!roots.includes(location.root) || location.path.includes('\0') || path.isAbsolute(location.path)) throw new HttpError(400, '无效路径');
-    const root = await fs.realpath(path.join(this.base, location.root));
+    if (location.path.includes('\0') || path.isAbsolute(location.path)) throw new HttpError(400, '无效路径');
+    const root = await fs.realpath(this.rootPath(location.root));
     const target = path.resolve(root, location.path);
     assertInside(root, target);
     try { assertInside(root, await fs.realpath(target)); }

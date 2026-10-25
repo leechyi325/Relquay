@@ -29,20 +29,24 @@ public class StudioCredentialsPlugin extends Plugin {
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());
         return generator.generateKey();
     }
+    private String slot(PluginCall call, String field) {
+        String scope = call.getString("key");
+        return scope == null ? field : field + ":" + scope;
+    }
     @PluginMethod public void set(PluginCall call) {
         String token = call.getString("token");
         if (token == null) { call.reject("Missing token"); return; }
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key());
             byte[] encrypted = cipher.doFinal(token.getBytes(StandardCharsets.UTF_8));
-            if (!storage().edit().putString("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-                .putString("data", Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit()) throw new Exception("Storage failed");
+            if (!storage().edit().putString(slot(call, "iv"), Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
+                .putString(slot(call, "data"), Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit()) throw new Exception("Storage failed");
             call.resolve();
         } catch (Exception e) { call.reject("Unable to protect session", e); }
     }
     @PluginMethod public void get(PluginCall call) {
         try {
-            String data = storage().getString("data", null), iv = storage().getString("iv", null);
+            String data = storage().getString(slot(call, "data"), null), iv = storage().getString(slot(call, "iv"), null);
             JSObject result = new JSObject();
             if (data != null && iv != null) {
                 Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -50,7 +54,7 @@ public class StudioCredentialsPlugin extends Plugin {
                 result.put("token", new String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), StandardCharsets.UTF_8));
             }
             call.resolve(result);
-        } catch (Exception e) { storage().edit().clear().apply(); call.resolve(new JSObject()); }
+        } catch (Exception e) { storage().edit().remove(slot(call, "data")).remove(slot(call, "iv")).apply(); call.resolve(new JSObject()); }
     }
-    @PluginMethod public void clear(PluginCall call) { storage().edit().clear().apply(); call.resolve(); }
+    @PluginMethod public void clear(PluginCall call) { storage().edit().remove(slot(call, "data")).remove(slot(call, "iv")).apply(); call.resolve(); }
 }

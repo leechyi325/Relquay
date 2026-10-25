@@ -9,6 +9,8 @@ const studio = createStudio({
   cloud: process.env.CLOUDCLI_URL ?? 'http://127.0.0.1:3001',
   dist: path.join(appDir, 'dist'), origin: process.env.STUDIO_ORIGIN ?? defaultOrigin,
   filebrowser: process.env.FILEBROWSER_URL, envFile: process.env.STUDIO_ENV_FILE,
+  allowedDirectories: process.env.STUDIO_BROWSE_ROOTS?.split(path.delimiter).filter(Boolean),
+  clientOrigins: process.env.STUDIO_CLIENT_ORIGINS?.split(',').map(value => new URL(value.trim()).origin),
 });
 studio.server.listen(Number(process.env.STUDIO_PORT ?? 3080), process.env.STUDIO_HOST ?? '127.0.0.1', () => console.log('RoamDeck ready'));
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { studio.close(); setTimeout(() => process.exit(0), 4000).unref(); });

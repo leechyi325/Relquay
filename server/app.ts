@@ -10,21 +10,26 @@ import multer from 'multer';
 import { WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
-import { conversationCreateSchema, locationSchema, roots } from '../shared/protocol.ts';
+import { conversationCreateSchema, fileModuleSchema, locationSchema } from '../shared/protocol.ts';
+import { FileModules } from './modules.ts';
+import { Attachments, withFileReferences } from './attachments.ts';
+import { cloudModels, validateModel } from './models.ts';
 import { Files, HttpError, streamFile } from './files.ts';
 import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
 import { appVersion } from '../shared/config.ts';
 
 const exec = promisify(execFile);
-type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string };
+type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[] };
 type LoginSession = { token: string; cloudToken: string; username: string; expires: number };
 const readBearer = (req: Request) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
 const readCookie = (req: Request) => /(?:^|;\s*)studio=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
 export function createStudio(config: Config) {
   mkdirSync(config.state, { recursive: true, mode: 0o700 });
-  const files = new Files(config.base), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile);
+  const modules = new FileModules(config.base, config.state, config.allowedDirectories);
+  const files = new Files(config.base, id => modules.root(id)), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile);
   const codex = new CodexBridge(path.join(config.state, 'codex'));
+  const attachments = new Attachments(path.join(config.state, 'attachments'), files, config.cloudAssets ?? path.join(os.homedir(), '.cloudcli/assets'));
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 'loopback');
   const server = createServer(app), wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
   const sessionsFile = path.join(config.state, 'sessions.json');
@@ -36,7 +41,7 @@ export function createStudio(config: Config) {
   const secret = readFileSync(secretFile);
   const tickets = new Map<string, { session: LoginSession; expires: number; channel: string }>();
   const attempts = new Map<string, { count: number; until: number }>();
-  const allowed = new Set([config.origin, 'https://localhost', 'capacitor://localhost', 'http://localhost:5173', 'http://127.0.0.1:5173']);
+  const allowed = new Set([config.origin, 'https://localhost', 'capacitor://localhost', 'http://localhost:5173', 'http://127.0.0.1:5173', ...(config.clientOrigins ?? [])]);
   app.use((req, res, next) => {
     const origin = req.headers.origin;
     if (!req.path.startsWith('/preview/') && origin && !allowed.has(origin) && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}`) { res.status(403).json({ error: '来源不允许' }); return; }
@@ -82,6 +87,10 @@ export function createStudio(config: Config) {
     res.clearCookie('studio'); res.json({ ok: true });
   });
   app.get('/api/me', (_req, res) => res.json({ username: res.locals.session.username }));
+  app.get('/api/agents/:provider/models', asyncRoute(async (req, res) => {
+    const provider = z.enum(['claude', 'codex']).parse(req.params.provider);
+    res.json({ models: provider === 'codex' ? await codex.models() : cloudModels((await cloud('/providers/claude/models', res.locals.session.cloudToken)).data) });
+  }));
   app.post('/api/conversations', asyncRoute(async (req, res) => {
     const body = conversationCreateSchema.parse(req.body), token = res.locals.session.cloudToken;
     const loc = { ...body.cwd };
@@ -152,6 +161,15 @@ export function createStudio(config: Config) {
       memoryUsed: os.totalmem() - os.freemem(), memoryTotal: os.totalmem(), diskFree: Number(stat.bavail) * Number(stat.bsize), diskTotal: Number(stat.blocks) * Number(stat.bsize), providers, cloudcli, projectPath: path.join(config.base, 'project') });
   }));
   app.get('/api/files', asyncRoute(async (req, res) => res.json(await files.list(locationSchema.parse(req.query)))));
+  app.post('/api/files/resolve', asyncRoute(async (req, res) => res.json({ path: await files.resolve(locationSchema.parse(req.body)), terminalRc: path.join(config.base, 'studio/terminal.rc') })));
+  const activeRoots = () => new Set(jobs.records.filter(job => ['queued', 'running', 'cancelling'].includes(job.status)).map(job => job.cwd.root));
+  app.get('/api/file-modules', (_req, res) => res.json(modules.modules));
+  app.put('/api/file-modules/:id', asyncRoute(async (req, res) => {
+    const module = fileModuleSchema.parse({ ...req.body, id: req.params.id });
+    res.json(await modules.save(module, activeRoots));
+  }));
+  app.delete('/api/file-modules/:id', (req, res, next) => { try { modules.remove(String(req.params.id), activeRoots()); res.json({ ok: true }); } catch(e) { next(e); } });
+  app.get('/api/directories', asyncRoute(async (req, res) => res.json(await modules.browse(z.string().optional().parse(req.query.path)))));
   app.get('/api/files/text', asyncRoute(async (req, res) => res.json(await files.read(locationSchema.parse(req.query)))));
   app.put('/api/files/text', asyncRoute(async (req, res) => {
     const body = locationSchema.extend({ content: z.string().max(2 * 1024 * 1024), modified: z.number() }).parse(req.body);
@@ -167,6 +185,11 @@ export function createStudio(config: Config) {
     await files.move(body.from, body.to); res.json({ ok: true });
   }));
   const upload = multer({ dest: path.join(config.state, 'uploads'), limits: { fileSize: 512 * 1024 * 1024, files: 1 } });
+  app.post('/api/chat/attachments', upload.single('file'), asyncRoute(async (req, res) => {
+    if (!req.file) throw new HttpError(400, '没有选择文件');
+    try { res.status(201).json(await attachments.upload(req.file.path, req.file.originalname)); }
+    finally { await fs.rm(req.file.path, { force: true }); }
+  }));
   app.post('/api/files/upload', upload.single('file'), asyncRoute(async (req, res) => {
     if (!req.file) throw new HttpError(400, '没有选择文件');
     try {
@@ -184,15 +207,16 @@ export function createStudio(config: Config) {
   app.post('/api/files/preview', asyncRoute(async (req, res) => {
     const loc = locationSchema.parse(req.body); await files.resolve(loc);
     const directory = path.posix.dirname(loc.path);
-    const payload = Buffer.from(JSON.stringify({ root: loc.root, path: directory === '.' ? '' : directory, expires: Date.now() + 15 * 60_000 })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ root: loc.root, path: directory === '.' ? '' : directory, mount: modules.fingerprint(loc.root), expires: Date.now() + 15 * 60_000 })).toString('base64url');
     res.json({ url: `/preview/${payload}.${sign(payload)}/${encodeURIComponent(path.posix.basename(loc.path))}` });
   }));
   app.get('/preview/:ticket/*asset', asyncRoute(async (req, res) => {
     const [payload, signature] = String(req.params.ticket).split('.');
     const expected = sign(payload ?? '');
     if (!signature || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new HttpError(403, '预览链接无效');
-    const cap = locationSchema.extend({ expires: z.number() }).parse(JSON.parse(Buffer.from(payload, 'base64url').toString()));
+    const cap = locationSchema.extend({ expires: z.number(), mount: z.string().optional() }).parse(JSON.parse(Buffer.from(payload, 'base64url').toString()));
     if (cap.expires < Date.now()) throw new HttpError(410, '预览已过期，请重新打开');
+    if (cap.mount !== modules.fingerprint(cap.root)) throw new HttpError(410, '目录映射已修改，请重新打开预览');
     const asset = req.params.asset as unknown as string[];
     const relative = asset.join('/');
     if (relative.split('/').includes('..')) throw new HttpError(403, '无效预览路径');
@@ -207,7 +231,7 @@ export function createStudio(config: Config) {
   }));
   app.post('/api/jobs/:id/cancel', (req, res) => res.json(jobs.cancel(String(req.params.id))));
   app.get('/api/jobs/:id/log', (req, res) => res.json({ log: jobs.log(String(req.params.id)) }));
-  app.get('/api/roots', (_req, res) => res.json(roots.map(id => ({ id, path: path.join(config.base, id) }))));
+  app.get('/api/roots', (_req, res) => res.json(modules.listRoots()));
   if (config.filebrowser) {
     const browserTickets = new Map<string, { token: string; expires: number }>();
     app.post('/api/filebrowser-link', (_req, res) => {
@@ -253,8 +277,10 @@ export function createStudio(config: Config) {
         const upstream = new WebSocket(config.cloud.replace(/^http/, 'ws') + (ticket.channel === 'chat' ? '/ws' : '/shell'), { headers: { Authorization: `Bearer ${ticket.session.cloudToken}` }, maxPayload: 8 * 1024 * 1024 });
         const buffer: Buffer[] = [];
         client.on('message', data => {
+          let interactionRequest: string | undefined;
           try {
             const message = JSON.parse(data.toString());
+            if (message.type === 'chat.permission-response' && typeof message.requestId === 'string') interactionRequest = message.requestId;
             if (ticket.channel === 'chat') {
               if (message.type === 'chat.subscribe' && Array.isArray(message.sessions)) {
                 const remote: unknown[] = [];
@@ -263,18 +289,30 @@ export function createStudio(config: Config) {
                 }
                 if (!remote.length) return; message.sessions = remote;
               } else if (message.type === 'chat.permission-response' && typeof message.requestId === 'string' && message.requestId.startsWith('codex:')) {
-                codex.approve(message.requestId, message.allow === true); return;
+                const answers = message.answers === undefined ? undefined : z.record(z.string(), z.object({ answers: z.array(z.string().max(10000)).max(30) })).parse(message.answers);
+                if (!codex.approve(message.requestId, message.allow === true, answers)) client.send(JSON.stringify({ kind: 'interaction_error', requestId: message.requestId, content: '该请求已处理或已失效，请刷新会话' }));
+                return;
+              } else if (message.type === 'chat.send') {
+                void (async () => {
+                  const body = z.object({ sessionId: z.string().regex(/^[a-zA-Z0-9_-]+$/), content: z.string().min(1).max(200000), options: z.object({ model: z.string().optional(), effort: z.string().optional(), attachments: z.array(z.unknown()).max(10).optional() }).default({}) }).parse(message);
+                  const resolved = await attachments.resolve(body.options.attachments);
+                  if (codex.has(body.sessionId)) { await codex.send(body.sessionId, body.content, body.options, resolved); return; }
+                  const session = await cloud('/providers/sessions/' + body.sessionId, ticket.session.cloudToken);
+                  if (session.data.provider !== 'claude') throw new HttpError(400, '该会话类型暂不支持，请在终端继续');
+                  const models = cloudModels((await cloud('/providers/claude/models', ticket.session.cloudToken)).data);
+                  const selected = validateModel(models, body.options.model, body.options.effort);
+                  const images = await attachments.claudeImages(resolved);
+                  const prepared = { type: 'chat.send', sessionId: body.sessionId, content: withFileReferences(body.content, resolved), options: { permissionMode: 'default', model: body.options.model ?? selected?.id, effort: body.options.effort ?? 'default', attachments: images } };
+                  if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify(prepared)); else if (buffer.length < 30) buffer.push(Buffer.from(JSON.stringify(prepared)));
+                })().catch(e => { if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ kind: 'protocol_error', sessionId: message.sessionId, content: String(e) })); });
+                return;
               } else if (codex.has(message.sessionId)) {
-                if (message.type === 'chat.send' && typeof message.content === 'string') {
-                  void codex.send(message.sessionId, message.content, message.options).catch(e => client.send(JSON.stringify({ kind: 'protocol_error', sessionId: message.sessionId, content: String(e) })));
-                  return;
-                }
                 if (message.type === 'chat.abort') { void codex.abort(message.sessionId).catch(e => client.send(JSON.stringify({ kind: 'error', sessionId: message.sessionId, content: String(e) }))); return; }
               }
             }
             const encoded = JSON.stringify(message);
             if (upstream.readyState === WebSocket.OPEN) upstream.send(encoded); else if (buffer.length < 30) buffer.push(Buffer.from(encoded));
-          } catch { client.send(JSON.stringify({ kind: 'protocol_error', content: '无效会话消息' })); }
+          } catch(e) { client.send(JSON.stringify({ kind: interactionRequest ? 'interaction_error' : 'protocol_error', requestId: interactionRequest, content: e instanceof Error ? e.message : '无效会话消息' })); }
         });
         upstream.on('open', () => { for (const data of buffer) upstream.send(data.toString()); });
         upstream.on('message', data => { if (client.readyState === WebSocket.OPEN) client.send(data.toString()); });

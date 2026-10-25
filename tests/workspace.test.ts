@@ -1,0 +1,93 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
+import { fixture, until } from './helpers.ts';
+import { FileModules } from '../server/modules.ts';
+import { loadServers, normalizeOrigin, persistServers } from '../shared/servers.ts';
+import { interactionQuestions, interactionResponse } from '../shared/interactions.ts';
+import { cloudModels, validateModel } from '../server/models.ts';
+import { CodexBridge } from '../server/codex.ts';
+
+test('server catalog migrates the legacy origin, keeps active selection, and rejects credential URLs/duplicates', () => {
+  const data = new Map([['studio.origin', 'https://first.example:28443']]);
+  const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); } };
+  const first = loadServers(storage, 'https://fallback.example'); assert.equal(first.profiles[0].origin, 'https://first.example:28443');
+  const second = { id: 'second', name: '工作机二', origin: 'https://second.example', username: 'owner' };
+  persistServers(storage, [...first.profiles, second], second.id); assert.equal(loadServers(storage, 'https://fallback.example').active, 'second');
+  assert.equal(normalizeOrigin(' https://second.example:443/ '), 'https://second.example');
+  for (const value of ['http://public.example', 'https://owner:password@server.example', 'https://server.example/path', 'https://server.example?token=abc']) assert.throws(() => normalizeOrigin(value));
+  storage.setItem('roamdeck.servers', JSON.stringify([second, { ...second, id: 'duplicate' }, { id: 'invalid' }])); assert.equal(loadServers(storage, 'https://fallback.example').profiles.length, 1);
+});
+test('module rename/multi-folder persistence, remap invalidates previews, and removing mappings retains files', async t => {
+  const f = await fixture(); t.after(f.close);
+  const body = await (await f.call('/api/file-modules')).json(); const outputs = body.find((item: { id: string }) => item.id === 'outputs');
+  await fs.mkdir(path.join(f.temp, 'second-output')); await fs.writeFile(path.join(f.temp, 'outputs/keep.txt'), 'original'); await fs.writeFile(path.join(f.temp, 'second-output/keep.txt'), 'new');
+  const post = (url: string, value: unknown, method = 'POST') => f.call(url, { method, body: JSON.stringify(value) });
+  const cap = await (await post('/api/files/preview', { root: 'outputs', path: 'keep.txt' })).json();
+  outputs.name = '交付物'; outputs.folders.push({ id: 'folder_extra', name: '另一个输出', path: path.join(f.temp, 'second-output') });
+  assert.equal((await post('/api/file-modules/outputs', outputs, 'PUT')).status, 200);
+  const saved = new FileModules(f.temp, path.join(f.temp, 'state'), [f.temp]); assert.equal(saved.modules.find(module => module.id === 'outputs')!.folders.length, 2);
+  assert.equal((await f.call('/api/files?root=folder_extra')).status, 200); assert.equal(await (await fetch(f.base + cap.url)).text(), 'original');
+  outputs.folders[0].path = path.join(f.temp, 'second-output'); assert.equal((await post('/api/file-modules/outputs', outputs, 'PUT')).status, 200);
+  assert.equal((await fetch(f.base + cap.url)).status, 410);
+  const created = { id: 'module_more', name: '输出文件2', folders: [{ id: 'folder_more', name: '结果', path: path.join(f.temp, 'outputs') }] };
+  assert.equal((await post('/api/file-modules/module_more', created, 'PUT')).status, 200); assert.equal((await f.call('/api/file-modules/module_more', { method: 'DELETE' })).status, 200);
+  assert.equal(await fs.readFile(path.join(f.temp, 'outputs/keep.txt'), 'utf8'), 'original');
+  const out = await (await post('/api/files/resolve', { root: 'outputs', path: 'keep.txt' })).json(); assert.equal(out.path, await fs.realpath(path.join(f.temp, 'second-output/keep.txt')));
+});
+test('module binding enforces allowed real directories, duplicate IDs and active job protection', async t => {
+  const f = await fixture(); t.after(f.close);
+  await fs.symlink('/etc', path.join(f.temp, 'outside-link'));
+  const module = { id: 'extra', name: '额外文件', folders: [{ id: 'folder_extra', name: '目录', path: '/etc' }] };
+  const save = () => f.call('/api/file-modules/extra', { method: 'PUT', body: JSON.stringify(module) });
+  assert.equal((await save()).status, 403); module.folders[0].path = path.join(f.temp, 'outside-link'); assert.equal((await save()).status, 403);
+  assert.equal((await f.call('/api/directories?path=/etc')).status, 403);
+  module.folders[0].path = path.join(f.temp, 'outputs'); module.folders.push({ ...module.folders[0] }); assert.equal((await save()).status, 409);
+  const active = await f.studio.jobs.add('long', 'sleep 20', { root: 'outputs', path: '' });
+  const outputs = (await (await f.call('/api/file-modules')).json()).find((item: { id: string }) => item.id === 'outputs'); outputs.folders[0].path = path.join(f.temp, 'inputs');
+  assert.equal((await f.call('/api/file-modules/outputs', { method: 'PUT', body: JSON.stringify(outputs) })).status, 409);
+  assert.equal((await f.call('/api/file-modules/outputs', { method: 'DELETE' })).status, 409); f.studio.jobs.cancel(active.id);
+});
+test('chat upload uses unique Chinese filenames; checked references/images and model effort reach Claude', async t => {
+  const f = await fixture(); t.after(f.close);
+  const upload = async () => { const body = new FormData(); body.append('file', new Blob(['# 中文附件']), '工作笔记.md'); return (await f.call('/api/chat/attachments', { method: 'POST', body })).json(); };
+  const first = await upload(), second = await upload(); assert.equal(first.name, '工作笔记.md'); assert.notEqual(first.reference.uploadId, second.reference.uploadId);
+  await fs.writeFile(path.join(f.temp, 'project/picture.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+  const create = await (await f.call('/api/conversations', { method: 'POST', body: JSON.stringify({ provider: 'claude', projectName: '测试项目', cwd: { root: 'project', path: '' } }) })).json();
+  const { ticket } = await (await f.call('/api/socket-ticket', { method: 'POST', body: '{"channel":"chat"}' })).json();
+  const ws = new WebSocket(f.base.replace('http', 'ws') + '/ws/chat?ticket=' + ticket); await once(ws, 'open'); t.after(() => ws.close());
+  ws.send(JSON.stringify({ type: 'chat.send', sessionId: create.sessionId, content: '检查附件', options: { model: 'claude-test', effort: 'high', attachments: [first.reference, { root: 'project', path: 'picture.png' }] } }));
+  await until(() => f.sentMessages.some(message => message.type === 'chat.send'));
+  const sent = f.sentMessages.find(message => message.type === 'chat.send')!; const options = sent.options as { effort: string; attachments: { path: string; name: string }[]; permissionMode: string };
+  assert.equal(options.effort, 'high'); assert.equal(options.permissionMode, 'default'); assert.match(String(sent.content), /工作笔记/); assert.equal(options.attachments[0].name, 'picture.png'); assert.equal(await fs.readFile(options.attachments[0].path).then(file => file[0]), 137);
+  const error = once(ws, 'message'); ws.send(JSON.stringify({ type: 'chat.send', sessionId: create.sessionId, content: 'unsafe', options: { attachments: [{ root: 'project', path: '../state/sessions.json' }] } }));
+  let frame = JSON.parse((await error)[0].toString()); if (frame.kind !== 'protocol_error') { await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error('No rejected reference')), 2000); ws.on('message', data => { frame = JSON.parse(data.toString()); if (frame.kind === 'protocol_error') { clearTimeout(timer); resolve(); } }); }); }
+  assert.equal(frame.kind, 'protocol_error'); assert.equal(f.sentMessages.filter(message => message.type === 'chat.send').length, 1);
+});
+test('models and interaction forms retain supported effort, selections and exact provider response shapes', () => {
+  const models = cloudModels({ models: { DEFAULT: 'one', OPTIONS: [{ value: 'one', label: 'One', effort: { default: 'high', values: [{ value: 'low' }, { value: 'high' }] } }, { value: 'two', label: 'Two' }] } });
+  assert.deepEqual(models[0].efforts, ['low', 'high']); assert.throws(() => validateModel(models, 'two', 'high')); assert.throws(() => validateModel(models, 'missing'));
+  const claude = { kind: 'permission_request', toolName: 'AskUserQuestion', input: { questions: [{ question: '做什么？', multiSelect: true, options: [{ label: 'A' }, { label: 'B' }] }] } };
+  assert.equal(interactionQuestions(claude)[0].multiple, true); assert.deepEqual(interactionResponse(claude, { '0': ['A', 'B'] }), { updatedInput: { ...claude.input, answers: { '做什么？': 'A, B' } } });
+  const codex = { kind: 'permission_request', interaction: 'questions', input: { questions: [{ id: 'q', question: '请输入', isSecret: true }] } };
+  assert.equal(interactionQuestions(codex)[0].secret, true); assert.deepEqual(interactionResponse(codex, { q: ['回答'] }), { answers: { q: { answers: ['回答'] } } }); assert.throws(() => interactionResponse(codex, {}));
+});
+test('Codex model/effort/image inputs and user question reply survive replay without auto approval', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roamdeck-codex-')), trace = path.join(dir, 'rpc.jsonl');
+  const bridge = new CodexBridge(dir, process.execPath, [path.resolve('tests/codex-fixture.mjs'), trace]);
+  t.after(async () => { bridge.close(); await new Promise(r => setTimeout(r, 50)); await fs.rm(dir, { recursive: true, force: true }); });
+  bridge.register('mobile', dir);
+  assert.equal((await bridge.models())[0].name, 'Test Model');
+  await assert.rejects(bridge.send('mobile', 'bad', { effort: 'unsupported' })); assert.equal(bridge.sessions.get('mobile')!.processing, false);
+  await bridge.send('mobile', 'QUESTION_TEST', { model: 'test-model', effort: 'high' }, [{ path: '/fixture/image.png', name: '图片.png', size: 12, mimeType: 'image/png' }]);
+  await until(() => bridge.approvals.size === 1);
+  const event = [...bridge.approvals.values()][0].event; assert.equal(event.interaction, 'questions');
+  const frames = (await fs.readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line)); const turn = frames.find(frame => frame.method === 'turn/start'); assert.equal(turn.params.effort, 'high'); assert.equal(turn.params.model, 'test-model'); assert.equal(turn.params.input[1].type, 'localImage');
+  assert.throws(() => bridge.approve(String(event.requestId), true));
+  assert.equal(bridge.approve(String(event.requestId), true, { color: { answers: ['深蓝'] } }), true); assert.equal(bridge.approve(String(event.requestId), true, {}), false);
+  await until(() => !bridge.sessions.get('mobile')!.processing); assert.ok(bridge.history('mobile').messages.some(message => message.content?.includes('深蓝')));
+});
