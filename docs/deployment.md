@@ -87,3 +87,9 @@ Android versionCode8，保持包标识与签名。快捷命令保存在设备 lo
 实际断线重连会替换 CloudCLI 的 tmux 附着客户端，原 shell 与进程继续运行。不要把 `forceRestart` 改成终止 tmux 会话。可设置 `STUDIO_SSH_TARGET` 后运行 `node scripts/check-terminal-replay.mjs`，只创建并清理独立测试会话，验证旧重播故障与新附着路径。Android 回归使用同一变量运行 `scripts/check-terminal-native.mjs`。
 
 服务器构建建议 `vite build --outDir .runtime/release-dist`，检查后发布静态文件；不要让默认清空 dist 的构建删除已发布的 `dist/downloads/`。实例的 shared/config.json、私有状态和凭据不从公共仓库覆盖。
+
+## 0.4.2 设备响应修复
+
+主要修复在服务器网关，已安装的0.4.1 App也受益；部署后重新连接终端。升级包versionCode9保持同包名和签名。已有输入和历史不被自动清除。
+
+除了重连，还必须验证延迟设备响应：`STUDIO_SSH_TARGET=USER@HOST node scripts/check-terminal-negotiation.mjs` 会创建独立目录与会话，注入迟到的设备响应，验证服务器本机协商、旧客户端保护、shell PID/变量保留，最后清理。不要捕获用户已有窗格来调试。网关重启仍需先确认任务与代理空闲。

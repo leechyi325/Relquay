@@ -10,7 +10,7 @@ if (!sshTarget) throw new Error('Set STUDIO_SSH_TARGET to the SSH user and host 
 const device = (await _android.devices()).find(value => value.serial() === 'emulator-5554');
 if (!device) throw new Error('Isolated emulator is not running');
 const directory = '终端验收-' + Date.now();
-let page, initCount = 0, sessionId = '', token, testPath = '';
+let page, initCount = 0, automaticReplies = 0, sessionId = '', token, testPath = '';
 const call = async (url, body) => {
   const response = await fetch(credentials.url + url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(body) });
   const data = await response.json(); assert.ok(response.ok, JSON.stringify(data)); return data;
@@ -27,7 +27,7 @@ try {
   await page.getByRole('heading', { name: '工作，随时接续。' }).waitFor();
   page.on('websocket', ws => {
     if (!ws.url().includes('/ws/terminal')) return;
-    ws.on('framesent', frame => { try { const message = JSON.parse(String(frame.payload)); if (message.type === 'init') { initCount++; sessionId = message.sessionId; } } catch {} });
+    ws.on('framesent', frame => { try { const message = JSON.parse(String(frame.payload)); if (message.type === 'init') { initCount++; sessionId = message.sessionId; } if (message.type === 'input' && /\x1b\[>[0-9]+;[0-9]+;[0-9]+c/.test(message.data)) automaticReplies++; } catch {} });
   });
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '文件', exact: true }).click();
   await page.getByRole('button', { name: '输入文件', exact: true }).first().click();
@@ -120,9 +120,10 @@ try {
   await until(() => page.evaluate(() => innerHeight > innerWidth));
   await page.waitForTimeout(400); await fits();
   assert.equal(initCount, 2, 'Changing display modes restarted the terminal');
+  assert.equal(automaticReplies, 0, 'Phone was asked to answer a locally negotiated device query');
   await page.getByRole('button', { name: '命令编辑器', exact: false }).click();
   await run('exit');
-  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['display tools sheet and collapsed extended keys', '14px output inset', 'touch selectable output contains real marker', 'system clipboard write succeeds', 'server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'tab navigation retains connection and draft', 'explicit reconnect preserves shell PID and variable', 'no device-response garbage', 'copy restores a 160-character wrapped line', 'one initial attach plus one explicit reconnect; display changes never reattach'], realPhoneTested: false };
+  const report = { passed: true, platform: 'Android 16 ARM64 emulator / real server tmux', initial, fixed, landscape, directory, sessionId, checks: ['display tools sheet and collapsed extended keys', '14px output inset', 'touch selectable output contains real marker', 'system clipboard write succeeds', 'server tmux pane rows/columns equal client', 'fit mode rightmost column visible', '80/120 columns', 'actual horizontal touch swipe', 'alternate screen RIGHT_EDGE visible after panning', 'full screen and landscape', 'tab navigation retains connection and draft', 'explicit reconnect preserves shell PID and variable', 'no phone DA2 response across both attachments', 'no device-response garbage', 'copy restores a 160-character wrapped line', 'one initial attach plus one explicit reconnect; display changes never reattach'], realPhoneTested: false };
   await writeFile('artifacts/terminal-revision-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally {
   await device.shell('settings put system user_rotation 0').catch(() => {});

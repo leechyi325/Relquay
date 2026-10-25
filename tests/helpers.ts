@@ -53,8 +53,9 @@ export async function fixture(port = 0) {
     if (event.kind === 'complete') running.delete(sessionId); else running.add(sessionId);
     for (const [client, ids] of subscribers) if (client.readyState === 1 && ids.has(sessionId)) client.send(JSON.stringify(message));
   };
-  const wss = new WebSocketServer({ server: upstream });
-  wss.on('connection', client => { subscribers.set(client, new Set()); client.on('close', () => subscribers.delete(client)); client.on('message', value => {
+  const wss = new WebSocketServer({ server: upstream }), shellClients = new Set<WebSocket>();
+  const publishTerminal = (data: string) => { for (const client of shellClients) if (client.readyState === 1) client.send(JSON.stringify({ type: 'output', data })); };
+  wss.on('connection', (client, request) => { if (request.url === '/shell') shellClients.add(client); subscribers.set(client, new Set()); client.on('close', () => { subscribers.delete(client); shellClients.delete(client); }); client.on('message', value => {
     const input = JSON.parse(value.toString()); sentMessages.push(input);
     if (input.type === 'chat.subscribe') {
       for (const item of input.sessions) { subscribers.get(client)!.add(item.sessionId); const events = replay.get(item.sessionId) ?? []; client.send(JSON.stringify({ kind: 'chat_subscribed', sessionId: item.sessionId, isProcessing: running.has(item.sessionId), pendingPermissions: running.has(item.sessionId) ? events.filter(event => event.kind === 'permission_request' && !events.some(next => next.kind === 'permission_resolved' && next.requestId === event.requestId)) : [] })); if (running.has(item.sessionId)) for (const event of events) if (Number(event.seq) > (item.lastSeq ?? 0)) client.send(JSON.stringify(event)); }
@@ -68,7 +69,7 @@ export async function fixture(port = 0) {
       const sessionId = [...replay].find(([, events]) => events.some(event => event.requestId === input.requestId))?.[0];
       if (sessionId) { publish(sessionId, { kind: 'permission_resolved', requestId: input.requestId }); publish(sessionId, { kind: 'complete' }); }
     } else if (input.type === 'init') client.send(JSON.stringify({ type: 'output', data: 'TERMINAL_READY\r\n' + 'WRAP_' + 'a'.repeat(160) + '_END\r\n中文_' + '中'.repeat(63) + '_结束\r\nHARD_LINE_ONE\r\nHARD_LINE_TWO\r\n' }));
-    else if (input.type === 'input') client.send(JSON.stringify({ type: 'output', data: input.data }));
+    else if (input.type === 'input') { if (!/^\x1b\[>[0-9]+;[0-9]+;[0-9]+c$/.test(input.data)) client.send(JSON.stringify({ type: 'output', data: input.data })); }
     else client.send(value.toString());
   }); });
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
@@ -91,6 +92,6 @@ export async function fixture(port = 0) {
   const { token } = await login.json() as { token: string };
   const call = (url: string, options?: RequestInit) => fetch(base + url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options?.headers } });
   const close = async () => { studio.close(); wss.clients.forEach(c => c.terminate()); wss.close(); upstream.close(); await fs.rm(temp, { recursive: true, force: true }); };
-  return { temp, base, token, call, close, studio, projects, catalog, running, sentMessages, publish, extensions };
+  return { temp, base, token, call, close, studio, projects, catalog, running, sentMessages, publish, publishTerminal, extensions };
 }
 export async function until(condition: () => boolean, timeout = 5000) { const start = Date.now(); while (!condition()) { if (Date.now() - start > timeout) throw new Error('Timed out waiting for state'); await new Promise(r => setTimeout(r, 25)); } }

@@ -26,6 +26,7 @@ import { NotificationStore } from './notifications.ts';
 import { CloudObserver } from './cloud-observer.ts';
 import { claudeTokens } from '../shared/usage.ts';
 import { decodeEvent } from '../shared/protocol.ts';
+import { TerminalNegotiation } from './terminal.ts';
 
 const exec = promisify(execFile);
 type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions };
@@ -327,10 +328,19 @@ export function createStudio(config: Config) {
         socketOwners.set(client, ticket.session.token);
         const upstream = new WebSocket(config.cloud.replace(/^http/, 'ws') + (ticket.channel === 'chat' ? '/ws' : '/shell'), { headers: { Authorization: `Bearer ${ticket.session.cloudToken}` }, maxPayload: 8 * 1024 * 1024 });
         const buffer: Buffer[] = [];
+        const terminal = new TerminalNegotiation(data => { if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'input', data })); });
         client.on('message', data => {
           let interactionRequest: string | undefined;
           try {
             const message = JSON.parse(data.toString());
+            if (ticket.channel === 'terminal') {
+              // Enforce fresh tmux attachments for pre-0.4.1 phone clients too.
+              if (message.type === 'init' && message.isPlainShell === true) message.forceRestart = true;
+              if (message.type === 'input' && typeof message.data === 'string') {
+                message.data = terminal.clientInput(message.data);
+                if (!message.data) return;
+              }
+            }
             if (message.type === 'chat.permission-response' && typeof message.requestId === 'string') interactionRequest = message.requestId;
             if (ticket.channel === 'chat') {
               if (message.type === 'chat.subscribe' && Array.isArray(message.sessions)) {
@@ -368,6 +378,16 @@ export function createStudio(config: Config) {
         });
         upstream.on('open', () => { for (const data of buffer) upstream.send(data.toString()); });
         upstream.on('message', data => {
+          if (ticket.channel === 'terminal') {
+            try {
+              const message = JSON.parse(data.toString());
+              if (message.type === 'output' && typeof message.data === 'string') {
+                message.data = terminal.serverOutput(message.data);
+                if (message.data && client.readyState === WebSocket.OPEN) client.send(JSON.stringify(message));
+                return;
+              }
+            } catch {}
+          }
           if (ticket.channel === 'chat') { try { const event = decodeEvent(JSON.parse(data.toString())); if (event && !codex.has(event.sessionId ?? '')) { notices.ingest(event, 'claude'); usage.ingest(event); if (event.sessionId && event.kind !== 'chat_subscribed') observer.watch(event.sessionId); } } catch {} }
           if (client.readyState === WebSocket.OPEN) client.send(data.toString());
         });
