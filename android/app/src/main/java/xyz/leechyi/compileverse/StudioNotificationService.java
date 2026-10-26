@@ -26,16 +26,20 @@ import java.util.concurrent.TimeUnit;
 /** User initiated polling, one private cursor per server; no model execution or approval actions. */
 public class StudioNotificationService extends Service {
     static volatile boolean running = false;
-    private static final String MONITOR = "roamdeck.monitor", ALERTS = "roamdeck.alerts", STOP = "roamdeck.pause";
+    static final String MONITOR = "roamdeck.monitor", ALERTS = "roamdeck.alerts";
+    private static final String STOP = "roamdeck.pause";
     private static final int ONGOING = 711;
     private ScheduledExecutorService worker; private volatile boolean stopped;
     private SharedPreferences prefs() { return StudioNotificationsPlugin.storage(this); }
     private NotificationManager manager() { return (NotificationManager)getSystemService(NOTIFICATION_SERVICE); }
-    @Override public void onCreate() {
-        super.onCreate(); stopped = false;
+    static void createChannels(NotificationManager manager) {
         NotificationChannel monitor = new NotificationChannel(MONITOR, "后台监听状态", NotificationManager.IMPORTANCE_LOW); monitor.setShowBadge(false);
         NotificationChannel alerts = new NotificationChannel(ALERTS, "任务与批准提醒", NotificationManager.IMPORTANCE_HIGH); alerts.setDescription("任务完成、失败以及需要手动回应时提醒"); alerts.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
-        manager().createNotificationChannel(monitor); manager().createNotificationChannel(alerts);
+        manager.createNotificationChannel(monitor); manager.createNotificationChannel(alerts);
+    }
+    @Override public void onCreate() {
+        super.onCreate(); stopped = false;
+        createChannels(manager());
         if (Build.VERSION.SDK_INT >= 34) startForeground(ONGOING, ongoing(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE); else startForeground(ONGOING, ongoing());
         running = true;
         worker = Executors.newSingleThreadScheduledExecutor(); worker.scheduleWithFixedDelay(this::poll, 0, 15, TimeUnit.SECONDS);
@@ -61,14 +65,20 @@ public class StudioNotificationService extends Service {
                 String token = StudioCredentialsPlugin.readToken(this, origin);
                 if (token.isEmpty()) { prefs().edit().putString("error:" + origin, "请先登录该服务器").apply(); continue; }
                 boolean first = !prefs().contains("cursor:" + origin); long cursor = prefs().getLong("cursor:" + origin, 0);
+                long since = prefs().getLong("since:" + origin, System.currentTimeMillis());
+                if (first && !prefs().contains("since:" + origin)) prefs().edit().putLong("since:" + origin, since).commit();
                 for (int batch = 0; batch < 6 && !stopped && selected(origin); batch++) {
                     JSONObject page = request(origin, token, first ? null : cursor); if (stopped || !selected(origin)) break;
                     // A restored server may have an older sequence. Bootstrap pending items without replaying old completions.
-                    if (!first && page.optBoolean("gap") && page.optLong("cursor") < cursor) { prefs().edit().remove("cursor:" + origin).commit(); break; }
+                    if (!first && page.optBoolean("gap") && page.optLong("cursor") < cursor) { prefs().edit().remove("cursor:" + origin).putLong("since:" + origin, System.currentTimeMillis()).commit(); break; }
                     JSONArray items = page.getJSONArray("items");
                     for (int j = 0; j < items.length() && !stopped && selected(origin); j++) {
                         JSONObject item = items.getJSONObject(j); String type = item.getString("type"); boolean approval = type.equals("approval") || type.equals("question");
-                        if (item.has("resolvedAt") || item.has("readAt") || first && !approval || !(approval ? prefs().getBoolean("approvals", true) : prefs().getBoolean("completions", true))) continue;
+                        long created = 0; try { created = java.time.Instant.parse(item.optString("createdAt")).toEpochMilli(); } catch (Exception ignored) {}
+                        if (item.has("resolvedAt") || item.has("readAt") || first && !approval && created < since || !(approval ? prefs().getBoolean("approvals", true) : prefs().getBoolean("completions", true))) continue;
+                        // The ongoing monitor channel can remain visible while alerts
+                        // are disabled. Keep the cursor until the user restores it.
+                        if (manager().getNotificationChannel(ALERTS).getImportance() == NotificationManager.IMPORTANCE_NONE) throw new Exception("Alerts disabled");
                         alert(origin, name, item);
                     }
                     cursor = page.getLong("cursor"); prefs().edit().putLong("cursor:" + origin, cursor).putLong("synced:" + origin, System.currentTimeMillis()).remove("error:" + origin).commit();
@@ -103,7 +113,7 @@ public class StudioNotificationService extends Service {
         Bundle extras = new Bundle(); extras.putString("roamdeck.origin", origin); extras.putString("roamdeck.eventId", id); extras.putString("roamdeck.type", type);
         Notification publicView = new NotificationCompat.Builder(this, ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle("RoamDeck 有新提醒").build();
         Notification notification = new NotificationCompat.Builder(this, ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle(title).setContentText(server + " · 点击打开工作台").setContentIntent(open).setAutoCancel(true).setOnlyAlertOnce(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(publicView).setCategory(type.equals("approval") || type.equals("question") ? NotificationCompat.CATEGORY_MESSAGE : NotificationCompat.CATEGORY_STATUS).addExtras(extras).build();
-        if (!stopped && selected(origin) && StudioNotificationsPlugin.allowed(this)) manager().notify(origin + ":" + id, 1, notification);
+        if (!stopped && selected(origin) && StudioNotificationsPlugin.allowed(this)) { manager().notify(origin + ":" + id, 1, notification); prefs().edit().putLong("lastAlert:" + origin, System.currentTimeMillis()).apply(); }
     }
     @Override public void onDestroy() { stopped = true; running = false; if (worker != null) worker.shutdownNow(); stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy(); }
     @Override public IBinder onBind(Intent intent) { return null; }

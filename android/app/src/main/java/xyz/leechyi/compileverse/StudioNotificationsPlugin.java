@@ -2,6 +2,9 @@ package xyz.leechyi.compileverse;
 
 import android.Manifest;
 import android.app.NotificationManager;
+import android.app.NotificationChannel;
+import android.app.PendingIntent;
+import androidx.core.app.NotificationCompat;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -27,6 +30,13 @@ public class StudioNotificationsPlugin extends Plugin {
     static SharedPreferences storage(Context context) { return context.getSharedPreferences("studio_notifications", Context.MODE_PRIVATE); }
     static boolean allowed(Context context) { return NotificationManagerCompat.from(context).areNotificationsEnabled(); }
     static JSONArray servers(SharedPreferences prefs) { try { return new JSONArray(prefs.getString("servers", "[]")); } catch (Exception ignored) { return new JSONArray(); } }
+    @Override protected void handleOnResume() {
+        // Reopening an App stopped by Android must restore only an explicitly
+        // enabled monitor. Never request permission or enable it automatically.
+        if (storage(getContext()).getBoolean("enabled", false) && allowed(getContext()) && !StudioNotificationService.running) {
+            try { ContextCompat.startForegroundService(getContext(), new Intent(getContext(), StudioNotificationService.class)); } catch (Exception ignored) { /* Status shows enabled but stopped; user can retry. */ }
+        }
+    }
     private JSONArray checkedServers(JSArray values) throws Exception {
         JSONArray result = new JSONArray(); if (values == null || values.length() > 50) throw new Exception("请选择 1 至 50 台服务器");
         for (int i = 0; i < values.length(); i++) {
@@ -41,8 +51,11 @@ public class StudioNotificationsPlugin extends Plugin {
         SharedPreferences prefs = storage(getContext()); JSObject result = new JSObject(); JSONArray servers = servers(prefs), health = new JSONArray(), alerts = new JSONArray();
         result.put("enabled", prefs.getBoolean("enabled", false)); result.put("running", StudioNotificationService.running); result.put("permission", allowed(getContext()));
         result.put("approvals", prefs.getBoolean("approvals", true)); result.put("completions", prefs.getBoolean("completions", true)); result.put("servers", servers);
-        for (int i = 0; i < servers.length(); i++) { String origin = servers.getJSONObject(i).getString("origin"); JSONObject row = new JSONObject().put("origin", origin); long synced = prefs.getLong("synced:" + origin, 0); if (synced > 0) row.put("syncedAt", synced); String error = prefs.getString("error:" + origin, ""); if (!error.isEmpty()) row.put("error", error); health.put(row); }
+        for (int i = 0; i < servers.length(); i++) { String origin = servers.getJSONObject(i).getString("origin"); JSONObject row = new JSONObject().put("origin", origin); long synced = prefs.getLong("synced:" + origin, 0); if (synced > 0) row.put("syncedAt", synced); long lastAlert = prefs.getLong("lastAlert:" + origin, 0); if (lastAlert > 0) row.put("lastAlertAt", lastAlert); String error = prefs.getString("error:" + origin, ""); if (!error.isEmpty()) row.put("error", error); health.put(row); }
         NotificationManager manager = (NotificationManager)getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        NotificationChannel channel = manager.getNotificationChannel(StudioNotificationService.ALERTS);
+        result.put("alertsPermission", allowed(getContext()) && (channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE));
+        result.put("alertsImportance", channel == null ? NotificationManager.IMPORTANCE_HIGH : channel.getImportance());
         for (android.service.notification.StatusBarNotification item : manager.getActiveNotifications()) { android.os.Bundle extras = item.getNotification().extras; String event = extras.getString("roamdeck.eventId"); if (event != null) alerts.put(new JSONObject().put("eventId", event).put("origin", extras.getString("roamdeck.origin")).put("type", extras.getString("roamdeck.type"))); }
         result.put("serversStatus", health); result.put("alerts", alerts); return result;
     }
@@ -57,6 +70,7 @@ public class StudioNotificationsPlugin extends Plugin {
             JSONArray servers = checkedServers(call.getArray("servers")); boolean enabled = call.getBoolean("enabled", false);
             if (enabled && servers.length() == 0) { call.reject("请至少选择一台服务器"); return; }
             SharedPreferences prefs = storage(getContext());
+            if (enabled) for (int i = 0; i < servers.length(); i++) { String origin = servers.getJSONObject(i).getString("origin"); if (!prefs.contains("cursor:" + origin) && !prefs.contains("since:" + origin)) prefs.edit().putLong("since:" + origin, System.currentTimeMillis()).commit(); }
             prefs.edit().putString("servers", servers.toString()).putBoolean("approvals", call.getBoolean("approvals", true)).putBoolean("completions", call.getBoolean("completions", true)).putBoolean("enabled", enabled && allowed(getContext())).commit();
             Intent service = new Intent(getContext(), StudioNotificationService.class);
             if (enabled && allowed(getContext())) ContextCompat.startForegroundService(getContext(), service); else getContext().stopService(service);
@@ -79,4 +93,13 @@ public class StudioNotificationsPlugin extends Plugin {
     @PluginMethod public void getPendingOpen(PluginCall call) { call.resolve(peek(getActivity().getIntent())); }
     @PluginMethod public void consumeOpen(PluginCall call) { Intent intent = getActivity().getIntent(); if (intent != null && call.getString("eventId", "").equals(intent.getStringExtra("eventId"))) { intent.setAction(Intent.ACTION_MAIN); intent.removeExtra("origin"); intent.removeExtra("eventId"); } call.resolve(); }
     @PluginMethod public void openSettings(PluginCall call) { Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName()); getActivity().startActivity(intent); call.resolve(); }
+    @PluginMethod public void openAlertSettings(PluginCall call) { Intent intent = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName()).putExtra(Settings.EXTRA_CHANNEL_ID, StudioNotificationService.ALERTS); getActivity().startActivity(intent); call.resolve(); }
+    @PluginMethod public void testNotification(PluginCall call) {
+        try {
+            NotificationManager manager = (NotificationManager)getContext().getSystemService(Context.NOTIFICATION_SERVICE); StudioNotificationService.createChannels(manager);
+            if (!allowed(getContext()) || manager.getNotificationChannel(StudioNotificationService.ALERTS).getImportance() == NotificationManager.IMPORTANCE_NONE) { call.reject("任务与批准提醒频道已关闭，请在系统设置中开启"); return; }
+            PendingIntent open = PendingIntent.getActivity(getContext(), 7, new Intent(getContext(), MainActivity.class).setAction(Intent.ACTION_MAIN), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            manager.notify("roamdeck.test", 7, new NotificationCompat.Builder(getContext(), StudioNotificationService.ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle("RoamDeck 测试提醒").setContentText("提醒频道可用；任务和批准使用同一频道").setContentIntent(open).setAutoCancel(true).setVisibility(android.app.Notification.VISIBILITY_PRIVATE).build()); call.resolve();
+        } catch (Exception e) { call.reject("无法发送测试提醒，请检查系统通知设置"); }
+    }
 }

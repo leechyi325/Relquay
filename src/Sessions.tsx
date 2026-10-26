@@ -11,15 +11,18 @@ export function NewSession({ provider, setProvider, initialCwd, created, close }
   const [directories, setDirectories] = useState<{ id: string; path: string }[]>([]);
   const [projects, setProjects] = useState<{ fullPath: string; displayName: string }[]>([]), [loaded, setLoaded] = useState(false);
   const editedName = useRef(false);
+  const submitting = useRef(false);
   useEffect(() => { let live = true; void Promise.all([api<{ id: string; path: string }[]>('/api/roots'), cloud<{ fullPath: string; displayName: string }[]>('/projects?skipSync=1')]).then(([roots, known]) => { if (live) { setDirectories(roots); setProjects(known); setLoaded(true); } }).catch(e => { if (live) setError(e.message); }); return () => { live = false; }; }, []);
   const base = directories.find(value => value.id === cwd.root)?.path ?? rootNames[cwd.root];
   const directory = [base, cwd.path].filter(Boolean).join('/');
   useEffect(() => { if (!editedName.current && !createDirectory && loaded) setName(projects.find(project => project.fullPath === directory)?.displayName ?? (cwd.path.split('/').filter(Boolean).at(-1) || '默认项目')); }, [directory, loaded, projects, createDirectory]);
   async function submit() {
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true); setError('');
     const body: ConversationCreate = { provider, projectName: name, title, cwd, createDirectory };
     try { created(await post<Conversation>('/api/conversations', body)); }
-    catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+    catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { submitting.current = false; setBusy(false); }
   }
   return <Sheet title="新建会话" close={busy ? () => {} : close}>
     <div className="provider-choice">{(['claude', 'codex'] as const).map(id => <button className={provider === id ? 'selected' : ''} disabled={busy} onClick={() => setProvider(id)} key={id}>{id === 'claude' ? 'Claude Code' : 'Codex'}{provider === id && <Check size={17}/>}</button>)}</div>

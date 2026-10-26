@@ -10,7 +10,7 @@ import multer from 'multer';
 import { WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
-import { conversationCreateSchema, fileModuleSchema, locationSchema } from '../shared/protocol.ts';
+import { conversationCreateSchema, fileModuleSchema, locationSchema, type Conversation } from '../shared/protocol.ts';
 import { FileModules } from './modules.ts';
 import { Attachments, withFileReferences } from './attachments.ts';
 import { cloudModels, validateModel } from './models.ts';
@@ -200,13 +200,18 @@ export function createStudio(config: Config) {
     res.set('Cache-Control', 'no-store'); res.json({ ...current, sessionTitle: body.title });
   }));
   app.delete('/api/conversations/:id', asyncRoute(async (req, res) => {
-    const id = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(req.params.id), token = res.locals.session.cloudToken;
+    const id = codex.resolveId(conversationId.parse(req.params.id)), token = res.locals.session.cloudToken;
+    const nativeId = codex.sessions.get(id)?.threadId;
     if (codex.sessions.get(id)?.processing) throw new HttpError(409, '会话正在运行，请先停止后再删除');
     const running = await cloud('/providers/sessions/running', token);
-    if (z.array(z.object({ sessionId: z.string() })).parse(running.data.sessions).some(value => value.sessionId === id)) throw new HttpError(409, '会话正在运行，请先停止后再删除');
+    if (z.array(z.object({ sessionId: z.string() })).parse(running.data.sessions).some(value => value.sessionId === id || value.sessionId === nativeId)) throw new HttpError(409, '会话正在运行，请先停止后再删除');
     if (codex.has(id)) await codex.archive(id);
     try { await cloud(`/providers/sessions/${id}?force=true&deletedFromDisk=true`, token, { method: 'DELETE' }); }
     catch(error) { if (!codex.has(id) || !(error instanceof HttpError) || error.status !== 404) throw error; }
+    if (nativeId && nativeId !== id) {
+      try { await cloud(`/providers/sessions/${nativeId}?force=true&deletedFromDisk=true`, token, { method: 'DELETE' }); }
+      catch(error) { if (!(error instanceof HttpError) || error.status !== 404) throw error; }
+    }
     if (codex.has(id)) codex.remove(id);
     res.json({ ok: true });
   }));
@@ -219,14 +224,27 @@ export function createStudio(config: Config) {
     // Keep CloudCLI owner registration, plugin installation and unrelated admin routes private.
     if (!/^\/(providers|projects|git|commands)(\/|\?|$)/.test(req.url)) throw new HttpError(404, '接口不可用');
     const history = /^\/providers\/sessions\/([a-zA-Z0-9_-]+)\/messages/.exec(req.url);
-    if (req.method === 'GET' && history && codex.has(history[1])) { res.json({ success: true, data: codex.history(history[1]) }); return; }
+    if (req.method === 'GET' && history && codex.has(history[1])) {
+      const limit = z.coerce.number().int().min(1).max(500).default(100).parse(req.query.limit);
+      const offset = z.coerce.number().int().min(0).max(1000000).default(0).parse(req.query.offset);
+      res.json({ success: true, data: codex.history(history[1], limit, offset) }); return;
+    }
     const data = await cloud(req.url, res.locals.session.cloudToken, { method: req.method, ...(req.method === 'GET' ? {} : { body: JSON.stringify(req.body) }) });
     if (req.method === 'GET' && req.path === '/providers/sessions/recent' && Array.isArray(data.data?.conversations)) {
-      data.data.conversations = data.data.conversations.map((item: { sessionId: string; sessionTitle?: string; projectDisplayName?: string }) => {
+      const canonical = new Map<string, Conversation>();
+      for (const item of data.data.conversations as Conversation[]) {
         if (codex.has(item.sessionId) && !codex.sessions.get(item.sessionId)?.title && item.sessionTitle) codex.setInfo(item.sessionId, item.sessionTitle, item.projectDisplayName);
-        const owned = codex.info(item.sessionId);
-        return owned ? { ...item, sessionTitle: owned.sessionTitle, projectPath: owned.projectPath } : item;
-      });
+        const owned = item.provider === 'codex' ? codex.info(item.sessionId) : undefined;
+        const row = owned ? { ...item, ...owned, lastActivity: owned.lastActivity ?? item.lastActivity } : item;
+        canonical.set(row.provider + ':' + row.sessionId, row);
+      }
+      // CloudCLI can independently discover the native thread behind an app session.
+      // Identity, never display name or directory, determines whether rows are aliases.
+      for (const session of codex.sessions.values()) {
+        const key = 'codex:' + session.id;
+        if (!canonical.has(key)) canonical.set(key, codex.info(session.id)!);
+      }
+      data.data.conversations = [...canonical.values()].sort((a, b) => (Date.parse(b.lastActivity ?? '') || 0) - (Date.parse(a.lastActivity ?? '') || 0));
     }
     if (req.method === 'POST' && req.path === '/providers/sessions' && req.body.provider === 'codex') codex.register(data.data.sessionId, req.body.projectPath);
     res.json(data);

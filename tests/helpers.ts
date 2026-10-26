@@ -63,6 +63,14 @@ export async function fixture(port = 0) {
       const sessionId = input.sessionId; replay.set(sessionId, []); subscribers.get(client)!.add(sessionId);
       if (input.content.includes('UI_APPROVAL')) publish(sessionId, { kind: 'permission_request', requestId: 'ui-approval', toolName: 'Bash', input: { command: 'npm run build', cwd: '/workspace/demo', description: '运行构建，核对页面修改' } });
       else if (input.content.includes('UI_QUESTION')) publish(sessionId, { kind: 'permission_request', requestId: 'ui-question', toolName: 'AskUserQuestion', input: { questions: [{ header: '实现方式', question: '希望优先实现哪些入口？', multiSelect: true, options: [{ label: '文件', description: '优先完成文件管理' }, { label: '终端', description: '优先完成触屏终端' }] }] } });
+      else if (input.content.includes('UI_MARKDOWN')) {
+        publish(sessionId, { kind: 'thinking', itemId: 'ui-thought', mode: 'delta', channel: 'summary', content: '开头完整保留。\n\n' });
+        publish(sessionId, { kind: 'status', content: '正在核对' });
+        publish(sessionId, { kind: 'thinking', itemId: 'ui-thought', mode: 'delta', channel: 'summary', content: '中间思考。'.repeat(80) + '\n\n思考结尾。' });
+        const content = '# 修复报告\n\n**重点**与 ~~已删除~~。\n\n- [x] 核对完成\n- [ ] 待复核\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 生效 |\n\n> 引用说明\n\n```typescript\nconst message = "中文代码";\nconsole.log(message);\n```\n\n[危险链接](javascript:alert(1))';
+        publish(sessionId, { kind: 'stream_delta', itemId: 'ui-text', content: content.slice(0, 35) });
+        publish(sessionId, { kind: 'text', itemId: 'ui-text', role: 'assistant', content }); publish(sessionId, { kind: 'complete' });
+      }
       else if (input.content.includes('WAIT_OBSERVER')) publish(sessionId, { kind: 'status', content: 'fixture is working' });
       else { publish(sessionId, { kind: 'text', role: 'assistant', content: '已收到测试消息和附件。' }); publish(sessionId, { kind: 'complete' }); }
     } else if (input.type === 'chat.permission-response') {

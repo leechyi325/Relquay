@@ -64,7 +64,14 @@ export class CodexBridge {
     this.sessions.delete(id); this.listeners.delete(id);
     fs.rmSync(path.join(this.directory, id + '.jsonl'), { force: true }); this.persist();
   }
-  history(id: string, limit = 100) { const s = this.sessions.get(id)!; return { messages: s.events.slice(-limit), total: s.events.length, hasMore: s.events.length > limit }; }
+  history(id: string, limit = 100, offset = 0) {
+    const s = this.sessions.get(id)!, end = Math.max(0, s.events.length - offset);
+    let start = Math.max(0, end - limit);
+    // One reasoning item can contain thousands of deltas. Start at a turn boundary
+    // rather than presenting only its tail as if it were the complete thought.
+    while (start > 0 && s.events[start].role !== 'user' && s.events[start - 1].kind !== 'complete') start--;
+    return { messages: s.events.slice(start, end), total: s.events.length, hasMore: start > 0, offset, nextOffset: s.events.length - start };
+  }
   private emit(session: Session, value: ChatEvent) {
     const event = { ...value, id: value.id ?? crypto.randomUUID(), sessionId: session.id, provider: 'codex', timestamp: new Date().toISOString(), seq: ++session.seq };
     session.events.push(event);
@@ -206,13 +213,21 @@ export class CodexBridge {
       case 'thread/tokenUsage/updated': this.emit(session, { kind: 'token_usage', tokenUsage: p.tokenUsage, turnId: p.turnId }); break;
       case 'turn/started': session.turnId = String(record(p.turn).id); this.emit(session, { kind: 'status', content: 'Codex 正在工作' }); break;
       case 'item/agentMessage/delta': this.emit(session, { kind: 'stream_delta', content: String(p.delta ?? ''), itemId: p.itemId }); break;
-      case 'item/reasoning/summaryTextDelta': this.emit(session, { kind: 'thinking', content: String(p.delta ?? '') }); break;
+      case 'item/reasoning/summaryTextDelta':
+      case 'item/reasoning/textDelta':
+        this.emit(session, { kind: 'thinking', content: String(p.delta ?? ''), itemId: p.itemId, channel: frame.method.includes('summary') ? 'summary' : 'reasoning', partIndex: p.summaryIndex ?? p.contentIndex ?? 0, mode: 'delta' }); break;
+      case 'item/reasoning/summaryPartAdded': break;
       case 'item/commandExecution/outputDelta': this.emit(session, { kind: 'tool_result', toolId: String(p.itemId), content: String(p.delta ?? '') }); break;
       case 'item/started':
         if (!['agentMessage', 'userMessage', 'reasoning'].includes(String(item.type))) this.emit(session, { kind: 'tool_use', toolName: String(item.type), toolId: String(item.id), toolInput: item });
         break;
       case 'item/completed':
         if (item.type === 'agentMessage') this.emit(session, { kind: 'text', role: 'assistant', content: String(item.text ?? ''), itemId: item.id });
+        else if (item.type === 'reasoning') {
+          for (const [channel, parts] of [['summary', item.summary], ['reasoning', item.content]] as const) {
+            if (Array.isArray(parts) && parts.some(part => typeof part === 'string' && part.length)) this.emit(session, { kind: 'thinking', itemId: item.id, channel, mode: 'snapshot', content: parts.filter((part): part is string => typeof part === 'string').join('\n\n') });
+          }
+        }
         else if (!['userMessage', 'reasoning'].includes(String(item.type))) this.emit(session, { kind: 'tool_result', toolId: String(item.id), toolResult: item });
         break;
       case 'turn/completed': this.finish(session, record(p.turn).status === 'completed', record(p.turn).error ? JSON.stringify(record(p.turn).error) : undefined); break;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, File, FolderOpen, LoaderCircle, MoreHorizontal, Paperclip, Server, Settings2, Sparkles, Square, SquareTerminal, Upload, X } from 'lucide-react';
-import Markdown from 'react-markdown';
+import { ChatMarkdown } from './ChatMarkdown';
+import { presentEvents } from '../shared/chat-presentation';
 import { api, origin } from './api';
 import { useChat } from './useChat';
 import { Sheet, bytes } from './Files';
@@ -45,6 +46,7 @@ export function Chat({ conversation, back, reference, clearReference, toast, man
   const messages = presentEvents(chat.events), failure = chat.events.findLast(event => event.kind === 'interaction_error');
   return <div className="chat-page"><div className="chat-heading"><button className="icon-button" aria-label="返回工作台" onClick={back}><ArrowLeft size={20}/></button><div><h2>{conversation.sessionTitle}</h2><span>{names[conversation.provider]} <i/> {chat.connected ? chat.permissions.length ? '等待你的回应' : chat.processing ? '正在工作' : '已连接' : '正在重连'}</span></div><SessionTokenButton sessionId={conversation.sessionId} changed={chat.events.filter(event => event.kind === 'complete' || event.kind === 'token_usage' || event.tokenBudget).length}/><button className="icon-button" aria-label="会话信息" onClick={() => setDetails(true)}><MoreHorizontal size={21}/></button></div>
     <div className="chat-scroll" ref={scroll} onScroll={() => { if (scroll.current) pinned.current = scroll.current.scrollHeight - scroll.current.scrollTop - scroll.current.clientHeight < 100; }}>
+      {chat.hasMore && <button className="history-more" disabled={chat.loadingHistory} onClick={() => { pinned.current = false; const node = scroll.current, height = node?.scrollHeight ?? 0, top = node?.scrollTop ?? 0; void chat.loadEarlier().then(() => requestAnimationFrame(() => { if (node) node.scrollTop = top + node.scrollHeight - height; })); }}>{chat.loadingHistory ? '正在读取…' : '加载更早的消息'}</button>}
       {!messages.length && <div className="chat-welcome"><div className={'welcome-symbol ' + conversation.provider}>{conversation.provider === 'claude' ? '✳' : '⌘'}</div><span className="eyebrow">LET'S GET TO WORK</span><h2>这次，想完成什么？</h2><p>描述目标，或添加手机和服务器上的文件。</p><div className="prompt-chips">{['检查项目，说明当前结构与状态', '帮我规划并实现一个新功能', '检查代码，提出修复与改进建议'].map(prompt => <button key={prompt} onClick={() => setDraft(prompt)}>{prompt}<ArrowUpRight size={15}/></button>)}</div></div>}
       {messages.map((message, index) => <Message key={message.id ?? index} message={message}/>)}
       {chat.processing && !chat.permissions.length && <div className="working-state"><span className="thinking-dots"><i/><i/><i/></span><span>正在处理，离开页面后任务继续。</span></div>}
@@ -60,19 +62,9 @@ export function Chat({ conversation, back, reference, clearReference, toast, man
     {details && <Sheet title="会话信息" close={() => setDetails(false)}><dl className="session-info"><dt>代理</dt><dd>{names[conversation.provider]}</dd><dt>会话</dt><dd>{conversation.sessionId}</dd><dt>服务器</dt><dd>{origin}</dd><dt>模型</dt><dd>{selected?.name ?? '服务器默认'}</dd><dt>思考程度</dt><dd>{effortNames[effort] ?? (effort || '模型默认')}</dd><dt>工作区</dt><dd>{projectPath || '读取目录…'}</dd></dl><div className="action-list"><button onClick={() => { setDetails(false); manage(); }}>重命名 / 管理会话<ChevronRight size={16}/></button></div></Sheet>}
   </div>;
 }
-function presentEvents(events: ChatEvent[]) {
-  const out: ChatEvent[] = [];
-  for (const event of events) {
-    if (event.kind === 'status' && event.tokenBudget) continue;
-    if (['complete', 'token_usage', 'stream_end', 'permission_request', 'permission_resolved', 'permission_cancelled', 'session_created', 'interaction_error'].includes(event.kind)) continue;
-    if (event.kind === 'stream_delta') {
-      const previous = out.at(-1); if (previous?.kind === 'stream_delta') previous.content = (previous.content ?? '') + (event.content ?? event.text ?? ''); else out.push({ ...event, content: event.content ?? event.text ?? '' });
-    } else { if (event.kind === 'text' && event.role !== 'user' && out.at(-1)?.kind === 'stream_delta') out.pop(); if (event.id && out.some(e => e.id === event.id)) continue; out.push({ ...event }); }
-  }
-  return out;
-}
 function Message({ message }: { message: ChatEvent }) {
-  if (['text', 'stream_delta'].includes(message.kind)) return <article className={'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message')}><span className="message-author">{message.role === 'user' ? '你' : 'AI 助手'}</span><div className="markdown"><Markdown>{message.content ?? message.text ?? ''}</Markdown></div>{Array.isArray(message.attachments) && <div className="message-attachments">{message.attachments.map((file, i) => <span key={i}><File size={13}/>{String(file.name ?? '附件')}</span>)}</div>}</article>;
-  const label = message.kind === 'thinking' ? '思考摘要' : message.kind === 'tool_use' ? message.toolName ?? '工具调用' : message.kind === 'tool_result' ? '工具结果' : message.kind === 'error' ? '运行出错' : message.kind === 'status' ? '运行状态' : message.kind;
+  if (['text', 'stream_delta'].includes(message.kind)) return <article className={'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message')}><span className="message-author">{message.role === 'user' ? '你' : 'AI 助手'}</span><ChatMarkdown content={message.content ?? message.text ?? ''}/>{Array.isArray(message.attachments) && <div className="message-attachments">{message.attachments.map((file, i) => <span key={i}><File size={13}/>{String(file.name ?? '附件')}</span>)}</div>}</article>;
+  if (message.kind === 'thinking') return <details className="thinking-event"><summary><Sparkles size={16}/><strong>{message.channel === 'reasoning' ? '思考过程' : '思考摘要'}</strong><span>{(message.content ?? '').length.toLocaleString()} 字</span><ChevronDown size={15}/></summary><div className="thinking-content"><ChatMarkdown content={message.content ?? message.text ?? ''}/><p className="thinking-source">显示代理实际返回的思考内容</p></div></details>;
+  const label = message.kind === 'tool_use' ? message.toolName ?? '工具调用' : message.kind === 'tool_result' ? '工具结果' : message.kind === 'error' ? '运行出错' : message.kind === 'status' ? '运行状态' : message.kind;
   return <details className={'tool-event ' + (message.kind === 'error' ? 'error-event' : '')}><summary><span>{message.kind === 'thinking' ? <Sparkles size={15}/> : <SquareTerminal size={15}/>}</span>{label}<ChevronDown size={14}/></summary><pre>{message.content ?? message.text ?? JSON.stringify(message.toolInput ?? message.toolResult ?? message, null, 2)}</pre></details>;
 }

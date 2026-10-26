@@ -56,7 +56,7 @@ export function reduceChat(state: ChatState, event: ChatEvent): ChatState {
   }
   if (event.kind !== 'session_upserted' && event.kind !== 'loading_progress') {
     const optimistic = event.kind === 'text' && event.role === 'user' ? state.events.findIndex(e => e.optimistic === true) : -1;
-    next.events = optimistic >= 0 ? state.events.map((e, i) => i === optimistic ? event : e) : [...state.events, event].slice(-2000);
+    next.events = optimistic >= 0 ? state.events.map((e, i) => i === optimistic ? event : e) : [...state.events, event];
   }
   return next;
 }
