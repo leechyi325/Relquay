@@ -1,168 +1,137 @@
-# RoamDeck architecture and contracts
+# 架构与合同
 
-## 1. Scope
+适用版本：**0.4.5**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
 
-RoamDeck is a single-owner remote workspace. It joins server-resident agents, project sessions, files, PTY and background commands behind one authenticated gateway. An authenticated owner can execute server commands; this is not a multi-tenant isolation boundary.
+## 范围与数据流
 
-## 2. Interfaces
+RoamDeck 是单一所有者的远程工作台。登录者有权操作服务器文件、执行命令、授权代理；服务不是多租户隔离边界。客户端是独立 React 界面，通过 Capacitor 打包 Android，不是 CloudCLI 网页的 iframe。
 
 ```text
-Android bundled React UI / browser
-  → HTTPS reverse proxy
-    → Express gateway :3080 (loopback)
-      → CloudCLI :3001 (loopback)
-      → Codex App Server local stdio
-      → optional FileBrowser Quantum :3081 (loopback)
-      → file roots / persistent job queue / tmux
+Android 内置 React UI / 浏览器
+  → HTTPS 反向代理
+    → Express 网关（回环 3080）
+      → CloudCLI（回环 3001）：Claude 会话与标准化协议、项目目录、shell 附着
+      → Codex App Server（本机 stdio）：自有 Codex 执行、批准、历史和用量
+      → 可选 FileBrowser Quantum（回环 3081）
+      → 文件根 / 持久任务队列 / tmux
 ```
 
-| Interface | Contract |
+CloudCLI 固定版本且未修改上游代码。自有 Codex 会话使用 `initialize`、`initialized`、`thread/start` 或 `thread/resume`，再 `turn/start`；请求 sandbox 为 `workspace-write`，响应对应 `workspaceWrite`，批准策略 `on-request`。未支持的交互明确报错并提示终端处理。
+
+## 源码与状态归属
+
+| 位置 | 职责 |
 | --- | --- |
-| `POST /api/login` | Owner credentials → independent gateway token and secure cookie |
-| `POST /api/conversations` | `{provider,projectName,title?,cwd,createDirectory?}` → stable conversation ID and absolute project path |
-| `DELETE /api/conversations/:id` | Explicitly confirmed deletion, rejects running sessions; retains project files |
-| `/api/files*` | Root + relative path for listing, optimistic text save, upload, move and download |
-| `/api/jobs*` | Persistent command queue, status, log and cancellation |
-| `/api/socket-ticket` | One-use channel ticket, 30-second lifetime |
-| `/ws/chat`, `/ws/terminal` | Real-time agent events and PTY using ticket authentication |
-| `/preview/:capability/*` | Scoped signed resource, 15-minute lifetime and byte ranges |
+| [shared/protocol.ts](../shared/protocol.ts) | 位置、会话、事件解码和重放 reducer |
+| [shared/chat-presentation.ts](../shared/chat-presentation.ts) | 按 item/channel 合并增量、完成文本和思考 |
+| [shared/config-fields.ts](../shared/config-fields.ts) | 引导配置投影与草稿合并 |
+| [server/app.ts](../server/app.ts) | 鉴权、路由、网关和 Socket 生命周期 |
+| [server/codex.ts](../server/codex.ts) | 自有 Codex ID、stdio、历史、批准和事件 |
+| [server/modules.ts](../server/modules.ts) / [files.ts](../server/files.ts) | 模块绑定、实际路径边界和文件操作 |
+| [server/jobs.ts](../server/jobs.ts) | 单 worker 队列、持久日志和取消 |
+| [server/usage.ts](../server/usage.ts) / [notifications.ts](../server/notifications.ts) | 用量快照、额度与通用通知元数据 |
+| [server/agent-config.ts](../server/agent-config.ts) / [extensions.ts](../server/extensions.ts) | 固定原生配置文件、用户级扩展与串行写入 |
+| [server/terminal.ts](../server/terminal.ts) | 流式终端设备协商过滤 |
 
-## 3. Data and runtime contracts
+`STUDIO_BASE` 供应初始 project/inputs/outputs/logs；私有状态位置由 `STUDIO_STATE` 决定，未设置时为应用 `.state`。生产实例状态、账号、AI 配置和密钥不属于源码交付。运行环境和历史路径兼容见部署文档。
 
-- `shared/protocol.ts` owns locations, events, decoders and replay reducer. Do not duplicate event parsing in UI components.
-- `STUDIO_BASE` supplies `project`, `inputs`, `outputs`, `logs`. Gateway session state defaults to `.state`, configurable by `STUDIO_STATE`. `COMPILEVERSE_ROOT` remains a legacy alias.
-- CloudCLI persists projects and stable app session IDs. Project display name is bound to a full directory path. A custom session title is retained across messages.
-- Claude uses the upstream normalized protocol. Owned Codex sessions use `codex app-server --listen stdio://`, with `initialize`, `initialized`, `thread/start` or `thread/resume`, then `turn/start`.
-- Codex request sandbox is `workspace-write`; response type is `workspaceWrite`. Use `approvalPolicy: on-request` and explicit accept/decline. Unsupported interaction forms surface an error and terminal fallback.
-- Delete checks running state. Owned Codex threads are archived before gateway history is removed; project source directories are retained.
-- WebSocket reconnect uses replay cursors and pending approvals. Codex cursors persist across turns; upstream Claude cursors have their own reset behavior.
-- The queue reserves one worker before asynchronous lookup, persists state/logs, signals process groups on cancel, and marks old running jobs interrupted after restart.
+## 鉴权与能力链接
 
-## 4. Validation and errors
+- CloudCLI 验证所有者登录；网关签发独立七天 token / secure cookie，上游 token 留在服务器。退出关闭所属 Socket。网页使用按 origin 分项的 sessionStorage；Android 使用 AES-GCM + Keystore。
+- 服务器 profile 使用规范化 HTTPS origin，登录完成写回其捕获的 origin，避免切换期间串号。切换会重建服务器相关 UI/连接，远端作业不随之停止。浏览器跨服务器来源必须精确允许。
+- Socket 使用一次性、30 秒、绑定频道的 ticket；不将长期 bearer 放入 URL。过期、复用或频道错误的 ticket 拒绝握手。
+- 预览使用 15 分钟签名能力链接，绑定模块实际目录及作用范围。绑定变化使旧链接失效；改显示名不失效。HTML 无 same-origin 权限，资源链接仍受范围约束。
+- FileBrowser 高级入口使用 30 秒一次配对和回环可信代理，不公开上游管理权限。
 
-| Condition | Result |
+## 会话身份、消息和交互
+
+CloudCLI 保持稳定应用会话 ID。自有 Codex 原生 thread ID 作为别名解析到应用 ID；最近会话按代理和身份去重，不能按标题合并。同名独立会话保留；原目录条目缺失但网关仍拥有元数据时可以恢复。新建提交使用同步防重保护。
+
+查询/重命名先解析真实身份；名称 trim 后 1–200 字符，允许运行时重命名，不修改工作目录。自有 Codex 保存可选名称元数据，原生重命名尽力同步。删除检查双 ID 的运行状态，先 archive 原生线程再删除网关记录与对应目录条目，项目文件保留。
+
+消息按事件游标重放，断线保留待处理批准。Codex 事件游标跨轮次持久；Claude 使用上游重放语义。思考摘要和代理返回的可读思考分组折叠，不索取或伪造隐藏思考。历史分页向用户/轮次边界扩展，防止切断长思考；更早消息 prepend 不重置实时游标。自有历史 limit 1–500、offset 0–1000000，Claude 使用上游尾部 offset。
+
+Markdown 使用应用自己的 React 组件和 GFM，支持表格、任务列表、删除线、语义标题/列表/引用、代码语言与复制。跳过原始 HTML，外链只允许 HTTP(S)。交互参考 [HAPI](https://github.com/tiann/hapi/tree/65c8dc727a55b8bc14b8a17fc6ded6ca5846dd9d/web/src/components/assistant-ui) 与 [Paseo](https://github.com/getpaseo/paseo/blob/902b0c7a1637cc7a6c2ee268dca8161965a35def/docs/markdown-renderer.md)，没有直接复制其产品源码。
+
+批准只有显式单次允许/拒绝；问题使用协议可用的选择或输入，提交后等服务端确认。通知跳转先解析目标再标读/导航，已删除目标不创建空白会话；错误保留收件箱并显示可处理提示。
+
+## 文件与附件
+
+模块一个或多个绑定，默认边界为 home 和 STUDIO_BASE，可配置其他允许根。输入先检查词法路径，再检查真实路径；读写、移动和目录创建都不能通过符号链接越界。有排队/运行任务的绑定不能重映射。移除模块不删除物理文件。
+
+上传不覆盖已存在文件，单文件上限 512MB；文本上限 2MB，比较 mtime 后原子替换。二进制文本编辑拒绝。Range 返回正确的分段/416，预览链接失效需重新签发。
+
+附件每条消息最多 10 个；手机附件进入服务器独立库，同名不覆盖。PNG/JPEG/WebP/GIF 最多 20MB，传给支持图片的代理；其他附件转换为已核验的路径引用。移除待发引用不删除原文件。
+
+## 终端生命周期与设备协商
+
+终端首次访问才挂载，底部菜单切换使用隐藏而非卸载；保留连接、缓冲区和草稿，隐藏时关闭覆盖面板、全屏和 armed Ctrl。切换服务器、退出或改变目录仍清理对应客户端。
+
+FitAddon 的直接测量面保持零 padding，14px 留白置于外层。固定列宽和横向查看也使用同一 PTY；字号/旋转/全屏只 resize。实际重连强制更换 CloudCLI 附着 PTY，重新附着既有 tmux，不能杀死原 shell。不能将断线续接解释为主机重启续跑。
+
+旧故障来自上游重播 secondary DA 查询，以及慢网迟到响应进入 readline。网关本机消费顶层 `CSI > [0] c`，立即返回固定 xterm6 响应 `ESC[>0;276;0c`；扫描支持跨帧 CSI，保留 OSC/DCS、主 DA、光标报告和其他控制序列。输入端移除完整的重复 secondary DA 响应，不等待后续键，也不删除用户输入/输出中的可见字面量 `0;276;0c`。旧客户端 plain-shell init 同样被强制新附着。
+
+复制优先选区，否则导出 active buffer；使用 `isWrapped` 合并软折行，保留硬换行和边界真实空格，跳过宽字符空填充及末尾空行。复制不执行 shell 命令。快捷命令按 origin 保存在本机，上限 50 条、名称 60 字、命令 16000 字；空数组保持空，损坏/缺失时恢复默认，点击仅填草稿。命令历史单独保留。
+
+## 任务队列
+
+异步路径检查前先占用单 worker，避免并发越过限制。记录和日志持久化；取消发给进程组并按需升级信号，退出前不能声称已取消。启动时原运行项标记中断，排队项继续。
+
+名称可编辑，变更命令要求 queued；删除 running/cancelling 返回 409，其余删除记录与日志，输出文件保留。完成/运行任务的原命令不可直接改，复制创建新任务。
+
+## 额度、Token 与提醒
+
+账号额度由供应商数据归一化，缓存 60 秒。Codex 重置 Unix 秒转 ISO 时刻，由客户端 Intl 显示设备 IANA 时区、GMT 偏移和倒计时；服务器时区不改变时刻。
+
+用量最多留存 1000 个快照。Codex 是线程累计，缓存/思考为子项；Claude 是上下文快照。按会话列表结合最近最多 100 个目录名称及自有 Codex 元数据，别名取最新快照而非相加；上游目录不可用仍保留已有用量。缺失和真实 0 区分。Token 总计/日行和会话统计默认折叠，展开会话统计才加载，支持代理/名称搜索。
+
+通知保存最多 500 条通用元数据，最新列表 100 条；增量 `{items,cursor,unread,hasMore,gap}` 每页最多 100 条。读标记不解决批准。任务与 AI 回调产生终态/待处理事件，网关生成运行键去重；CloudObserver 独立于页面观察 Claude，不执行模型请求。短暂掉线不能直接当完成；只确认已结束时使用诚实的 ended 提醒。
+
+Android 使用用户开启的 specialUse 前台服务，每 15 秒顺序轮询选择的服务器，凭据来自 Keystore、正常 TLS、拒绝重定向；配置/游标不含密钥。常驻监听和任务提醒频道分离，状态分别报告权限、频道重要性、运行、同步、错误和最近通知。同频道测试不创建服务端事件。首次同步抑制启用前完成事件，保留启用至首次同步的新完成及待处理请求；频道关闭时保留游标以待恢复。显式重开仅恢复此前开启的监听。
+
+通知 Intent 仅含 origin 和不透明事件 ID，匹配已知服务器、恢复登录、认证查询目标后导航；冷启动消费要等活动 React effect 接受，兼容 StrictMode。系统强停和省电限制不绕过。
+
+## 原生配置与扩展
+
+配置和扩展按 provider 串行写入。固定用户配置文件、revision hash、no-store、512KB 上限、常规文件和最终符号链接检查、原子 mode600 替换；冲突返回 409。源码草稿不持久存储，保存不自动重启代理。
+
+引导表单仅修改明确字段，未修改保留原文；修改会规范 JSON/TOML，保留其他配置值但可能去掉 TOML 注释。高级认证留给源码。地址/提供商 ID 改变清空密钥，官方模式不触碰账号授权；切源码只更新草稿。Codex 服务器默认模型/effort 传 null，显式选择才覆盖。
+
+Skills 仅管理独立用户目录，限制名称/描述、256KB 文稿、20MB/2000 项目录导入，不接受链接/特殊文件。MCP 使用原生用户配置；Claude 全局停用归档到私有状态，活跃配置与归档的 revision 一起检查，崩溃遗留双份时活跃优先。插件使用固定 execFile 参数、用户 home、120 秒超时和有界输出，无 shell 插值、自动确认或项目级覆盖；不依赖未成熟的 Codex 插件 RPC。字段与操作细节见 [配置指南](configuration.md)。
+
+配置编辑操作栏为普通文档流，不复用批准面板 sticky footer；文本框有输入法友好的最小高度和内部滚动。
+
+## 接口索引
+
+以下除登录/健康外均要求授权，具体 payload 以共享 schema 和路由为准。
+
+| 接口 | 用途 |
 | --- | --- |
-| Missing/expired/revoked login | 401; logout closes owned sockets |
-| Foreign origin / private upstream admin endpoint | 403 / 404 |
-| Reused or wrong-channel socket ticket | Handshake 401 |
-| Absolute path / escaped symlink or traversal | 400 / 403 |
-| Existing upload destination / stale text version | 409, original retained |
-| Oversized file/editor / binary edit | 413 / 415 |
-| Invalid/expired preview capability | 403 / 410 |
-| Unsatisfiable Range | 416 with `Content-Range` |
-| Running session deletion | 409, stop first |
+| `/api/login`、`/api/logout`、`/api/me`、`/api/status`、`/api/health` | 登录与状态 |
+| `/api/conversations`、`/:id` | POST 新建，GET 查询，PUT 重命名，DELETE 删除 |
+| `/api/cloud/*` | 允许列表中的上游项目/代理/Git/命令接口，非任意管理代理 |
+| `/api/file-modules`、`/api/roots`、`/api/directories` | 模块与目录 |
+| `/api/files*`、`/api/chat/attachments` | 文件操作与附件 |
+| `/api/agents/:provider/models`、`/config` | 模型目录与配置 |
+| `/api/agents/:provider/skills`、`/mcp`、`/plugins` | 用户级扩展 |
+| `/api/jobs`、`/:id`、`/:id/cancel`、`/:id/log` | 任务增查改删、取消、日志 |
+| `/api/usage/accounts`、`/api/usage/sessions`、`/api/usage/sessions/:id` | 账号和会话用量；列表 provider/search/offset/limit，limit 1–100、offset 0–10000、search ≤200 字 |
+| `/api/notifications`、`/:id`、`/:id/read`、`/read-all` | 提醒与读取状态 |
+| `/api/socket-ticket`、`/ws/chat`、`/ws/terminal` | 短票据及实时连接 |
+| `/api/filebrowser-link`、`/preview/:capability/*` | 高级文件配对与受限预览 |
 
-Resolve both lexical and real paths under the chosen root. Text writes compare mtime and replace atomically. HTML is sandboxed without same-origin access; relative resources share its scoped capability. Do not put long-lived tokens in URLs or disable TLS verification.
+## 错误与验证要求
 
-Android stores the gateway token using AES-GCM and Android Keystore; web uses sessionStorage. Upstream credentials remain on the server. Native downloads use the system document picker. Android trusts system CAs; deployment certificates/private keys stay outside Git.
+| 条件 | 结果 |
+| --- | --- |
+| 缺失/过期/撤销登录 | 401 |
+| 非法来源 / 非允许上游管理接口 | 403 / 404 |
+| 重用或错频道 ticket | 握手 401 |
+| 路径/符号链接越界 | 400 / 403 |
+| 同名上传、保存冲突、运行中删除 | 409，保留原对象 |
+| 超出文件/编辑限制、二进制编辑 | 413 / 415 |
+| 无效/过期预览能力 | 403 / 410 |
+| 不可满足 Range | 416 与 Content-Range |
+| 提醒目标不存在 / 上游暂时无法查询 | 410 / 502，保留收件箱提示 |
 
-## 5. Good / base / bad cases
-
-- Good: select an existing repository or create a named project folder; send a task to an agent; review tool approval; leave a background command and inspect its output later.
-- Base: empty directories and unauthorized agent accounts show useful state. Native restart restores the encrypted workbench session.
-- Bad: traversal, forged preview, stale edit, reused ticket or active-session deletion must fail explicitly without overwriting project files.
-
-## 6. Verification
-
-`npm run typecheck`, `npm test`, `npm run build` form the basic gate. UI changes additionally run `npm run test:ui`; its upstream is a fixture, not model inference. Native changes require APK signing verification and Android checks; actual device results are labeled separately.
-
-Terminal layout changes must assert the rightmost cell is visible in fit mode and reachable in 80/120-column mode. Verify real server pane dimensions, touch scrolling, rotation and a single PTY connection across display changes. FitAddon measures its direct parent, so keep the measurement surface zero-padding and put horizontal scrolling outside it.
-
-## 7. Wrong versus correct
-
-- Wrong: store project names only in React; crop a padded terminal measure surface; reconnect the shell when changing font; automatically accept unknown tool requests.
-- Correct: persist names through CloudCLI; use a zero-padding measurement surface and reachable scroll viewport; resize the existing PTY; show explicit approvals and errors.
-
-Dependency versions are pinned in the app and upstream lock files. Native package identity and existing service paths remain stable during the product rename to preserve upgrades.
-
-## 8. Workspace 0.2 contracts
-
-- Each normalized HTTPS origin owns an independent token slot. Android encrypts each slot using AES-GCM and Android Keystore; web uses origin-keyed sessionStorage. The legacy single-token slot migrates once. Switching remounts the workspace and closes old sockets. Login completion writes to its captured origin, even if selection changed while the request was pending.
-- `GET /api/file-modules` returns `FileModule[] {id,name,folders:[{id,name,path}]}`; `PUT /api/file-modules/:id` validates/persists a module; `DELETE` removes only its mapping. `GET /api/roots` flattens folders into stable root IDs with module metadata. Old project/inputs/outputs/logs IDs survive migration.
-- `GET /api/directories?path` browses allowed real directories (home/base by default, override with STUDIO_BROWSE_ROOTS). `POST /api/files/resolve {root,path}` supplies actual path and terminal rc; never reconstruct custom paths by replacing `/project`.
-- Preview capabilities carry a hash of the canonical bound directory. Relabeling preserves them; rebinding invalidates them with 410. Active job references block remapping/removal, with active state checked after asynchronous directory validation.
-- `POST /api/chat/attachments` accepts one multipart file up to 512MB and returns a `ChatAttachment` containing an opaque uploadId. Files live in state/attachments/UUID with private metadata. Client messages send at most ten checked `{uploadId}` or `{root,path}` references, never arbitrary local paths.
-- For Claude native image input, verified images are copied into the upstream `~/.cloudcli/assets` direct-child store because CloudCLI rejects image descriptors elsewhere. General files use checked absolute paths. Codex uses `localImage` items. SVG and other unsupported native image types remain file references.
-- `GET /api/agents/:provider/models` returns normalized `AgentModel[] {id,name,efforts,defaultEffort,isDefault,images}`. CloudCLI 1.37.5 returns `data.models.OPTIONS`, not an array. Codex model/list uses `supportedReasoningEfforts`; turn/start uses `effort`. Validate against the current catalog before sending. No hard-coded model or effort catalog in the UI.
-- Pending Codex approvals use unique client request IDs separate from RPC IDs. `chat.permission-response` carries allow plus optional answers keyed by question ID (`{answers:string[]}`). Claude AskUserQuestion instead carries updatedInput with answers keyed by question text (multi-selection joined with comma + space). Unknown question shapes cannot be approved through a generic card.
-- `STUDIO_CLIENT_ORIGINS` explicitly extends REST/WebSocket CORS for browser clients hosted elsewhere. Do not allow arbitrary origins or move tokens into URLs to make multi-server work.
-
-Evidence: pinned CloudCLI 1.37.5 runtime/types and installed Codex 0.164.0 generated schema; official [Codex App Server](https://developers.openai.com/codex/app-server). Tests in workspace.test.ts and check-ui.mjs cover real data flow with protocol fixtures; check-workspace-remote.mjs and check-native.mjs cover Oracle/Android without claiming model inference.
-
-
-## 9. Usage and notifications (0.3)
-
-`shared/usage.ts` normalizes actual reported values; unknown is undefined, never a manufactured zero. `state/token-usage.json` retains up to 1000 session snapshots. Codex thread totals include cached input/reasoning subsets; Claude token_budget is a context snapshot. GET `/api/usage/accounts` aggregates server-local Codex RPC account/rateLimits/read + account/usage/read (60-second cache) and Claude OAuth usage when available. GET `/api/usage/sessions/:id` verifies session identity and returns `{snapshot:null,reason}` until reported. Claude OAuth uses a fixed HTTPS endpoint with redirects refused; credentials and raw error bodies never leave the server. Its endpoint is version dependent, so unavailable is expected with unsupported login modes.
-
-`state/notifications.json` atomically persists 500 notices, 3000 dedup keys and active Claude run IDs. GET `/api/notifications[?after=seq]` returns `{items,cursor,unread,hasMore,gap}`; ascending catch-up pages are at most 100. Without after it returns the latest 100 in reverse order. GET `/api/notifications/:id` and POST `/:id/read` / `/read-all` are authenticated. Reading does not resolve or approve. Completed/failed Codex turns and terminal queue states emit through callbacks. Claude per-run seq is not an event identity; gateway generated run keys and request IDs deduplicate multiple subscriptions. CloudObserver polls running state and subscribes independently of browser sockets; it never executes model requests. Missed completed replay produces an honest ended notice after grace and repeated confirmed absence. Provider outages do not imply completion.
-
-Android `StudioNotifications` validates HTTPS origins and exposes configure/status/syncServers/openSettings plus notification-open events. `StudioNotificationService` is a user-enabled specialUse foreground service with an ongoing low-priority status notification and pause action; Android 13+ POST_NOTIFICATIONS is requested from the visible App. Every 15 seconds it sequentially polls selected origins with the matching Keystore token, normal TLS and no redirects. Config/cursors contain no credentials. Cold/warm notification intents carry only origin + opaque event ID; React matches a known server, restores its login and fetches the authenticated notice before routing. Intent consumption occurs after the live React effect accepts it, preserving cold launch under StrictMode. Notification actions never approve. OS force-stop and battery limits are documented, not bypassed.
-
-`tests/usage-notifications.test.ts` covers quota normalization, fixed endpoint/caching/redaction, persistence/replay, exact read semantics, jobs, and server observation after client closure across seq resets. Fixtures explicitly inject fake Codex/Claude quota sources so tests cannot consume desktop accounts. `check-notifications-native.mjs` uses the isolated emulator and a named real HTTPS task, permission dialog, background delivery, exact log navigation and pause/resume dedup. `check-usage-remote.mjs` validates the installed ARM account APIs and failure notice; none of these checks claim authenticated model inference.
-
-## 0.3.1 interaction refinements
-
-- Model settings use app-owned selectable cards rather than native `<select>` menus; supported models/efforts and processing lock remain unchanged.
-- Folder creation belongs to the selected physical directory. The action is hidden when choosing a module folder, disabled during loading/error, and the sheet shows the parent location.
-- Terminal viewport provides 14px padding; xterm's measurement surface remains zero-padding. Fit width explicitly subtracts both insets; fixed columns and pan remain on the same PTY. Copy snapshots the current xterm selection or retained active buffer into a native-selectable readonly textarea. Copy uses the system clipboard, with manual selection fallback. It does not issue shell commands or enter terminal copy mode.
-- `PUT /api/jobs/:id {title,command?}` edits names; changed commands require `queued`. `DELETE /api/jobs/:id` removes records/logs and rejects running/cancelling jobs (409). Output files remain. Completed/running commands remain immutable; copying creates an editable new task. “已完成” includes all terminal states.
-- `GET /api/agents/:provider/config` returns `{provider,path,content,revision,exists}`; `PUT` accepts `{content,revision}`. Only `codex/config.toml` and `claude/settings.json` under the CLI configuration homes are addressable (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, otherwise service-user home). Auth files and arbitrary paths are excluded. New files are allowed; JSON must be an object, TOML uses pinned smol-toml. Syntax validation does not validate provider-specific option semantics. Responses are `no-store`, edits use content/existence hashes, conflict 409, a per-provider save lock, atomic mode-600 replacement, final-file symlink rejection and a 512KB limit. Drafts are not persisted to browser storage. Existing agent processes may need restarting to apply configuration; the editor does not restart running work.
-- Native builds may supply `VITE_STUDIO_ORIGIN=https://your-domain:port` to customize the initial server without committing instance configuration. Saved server profiles and credential scope still take priority.
-
-## 0.4 user-level extension management and compact controls
-
-Each provider card has an independent settings button opening Configuration / Skills / MCP / Plugins. File upload/create/view use one compact icon toolbar with accessible labels. Terminal copy/fullscreen/tools remain visible; width/font/reconnect/login commands are in a tools sheet, and extended control/arrow/Enter keys expand only when requested. Presentation changes retain the same PTY.
-
-Quota reset comes from Codex `account/rateLimits/read` → Unix seconds → ISO instant. The client formats that instant using its device IANA timezone, labels GMT offset and relative duration, and updates the countdown every30s. Changing the server timezone does not change the reset instant. Pacific DST is handled by Intl, not a fixed UTC-8 subtraction.
-
-Authenticated `/api/agents/:provider/skills` GET/POST, PUT/DELETE `/:id`, POST `/import` manage standalone user Skills. The editable roots are ~/.agents/skills and legacy CODEX_HOME/skills for Codex, CLAUDE_CONFIG_DIR/skills for Claude. Hidden/system and plugin-package folders are excluded. Opaque IDs resolve only to listed roots. Valid YAML name/description, 256KB SKILL.md limit, stale revision rejection, exclusive names, and constrained server-directory copies (20MB/2000 entries, no symlinks/special files) protect existing files. Client can import a phone SKILL.md as text or select an allowed server skill folder with supporting files. Removal explicitly deletes the selected standalone skill directory, not its original import source.
-
-GET `/mcp` lists name/enabled/transport and a URL without query/credentials; GET `/mcp/:name` returns the authenticated editable JSON plus revision. PUT `/mcp {name,config,enabled,create?,revision}`, DELETE `/mcp/:name {revision}` mutate only user-level entries. Native Codex `mcp_servers` tables preserve unrelated typed config values and use `enabled`. Claude entries use the user `mcpServers` in ~/.claude.json (or CLAUDE_CONFIG_DIR/.claude.json). Its project-only native disable lists are not repurposed: a global disable privately archives that entry in state/claude-mcp-disabled.json before removing it from active user config; re-enable restores it and clears the archive. Active config wins if a crash leaves both copies. Hash revisions cover active and archived states. Claude account/project metadata is preserved and never included in MCP responses. JSON/TOML serialization may normalize formatting/comments while retaining unrelated values. Saving does not connect or perform OAuth.
-
-GET `/plugins` projects installed CLI JSON into metadata; POST `/plugins {id,action:'install'|'enable'|'disable'|'remove'}` uses explicit `name@marketplace` selectors. Commands use execFile arrays, fixed provider executables, user scope, a neutral user-home cwd,120s timeout and bounded output; no shell interpolation or automatic command-install confirmation. Claude uses official list/install/enable/disable/uninstall; Codex uses list/add/remove and native plugins.<id>.enabled configuration. Directory-owned Claude plugins remain managed through their source; installation policy is left to actual CLI enforcement, not inferred from default-install labels. First-party App Server plugin RPC is under development and is not used. Interactive OAuth, marketplace catalog management and project scope remain outside this revision. CLI errors are generic to avoid leaking raw configuration or command secrets.
-
-`Extensions.exclusive` serializes extension and raw-config writes per provider. Private document read/write is shared with the raw editor: regular files only, revisions, atomic mode600 replacements, no-store responses. Tests inject temporary homes and fake CLIs; actual ARM script `check-extension-cli.mjs` additionally validates native MCP config reads and a harmless Claude local-marketplace plugin lifecycle inside disposable config homes. No model inference is needed.
-
-## 0.4.1 terminal lifecycle and copy
-
-Workspace mounts Terminal lazily and hides it across tab changes. Hidden terminal overlays/fullscreen/armed Ctrl close; connection, buffer and command draft remain. Server/profile change, logout or cwd change still tears down the corresponding client. Display changes only resize.
-
-CloudCLI 1.37.5 retains and replays raw PTY output on reuse, including secondary DA queries. xterm6 responds with `ESC[>0;276;0c`; replaying an expired query can send that response into shell input. Terminal init therefore sets `forceRestart:true` to replace only the upstream tmux attachment PTY and reattach the persistent tmux session. It must never kill the tmux shell. Do not filter literal output strings or suppress live capability negotiation. Independent regression verifies same pane PID and shell variable, legacy garbage reproduction, and three clean new attachments.
-
-`terminalText(buffer,cols)` joins `isWrapped` continuations, preserves explicit breaks and actual spaces at wrap boundaries, omits unused null padding before wide glyphs, and excludes empty trailing screen rows. A selected xterm range takes precedence. `studio.shortcuts:<origin>` stores up to50 `{id,name,command}` entries on-device, name≤60 and command≤16000 characters; `[]` remains empty, absent/corrupt storage recovers defaults. UI actions fill the editor and never execute immediately. `studio.commands:<origin>` retains existing recent-command history separately.
-
-## 0.4.2 device negotiation latency correction
-
-Fresh attachment alone does not protect a slow/backgrounded phone: a response delayed1.8s can arrive after tmux stops waiting and become readline input. `TerminalNegotiation.serverOutput(data)` owns secondaryDA on the gateway↔CloudCLI loopback: consume only top-level `CSI > [0] c`, return the pinned xterm6 response `ESC[>0;276;0c` immediately. Its streaming scanner recognizes split CSI and preserves OSC/DCS payloads, normal text, alternate-screen controls, primaryDA and cursor reports. State is per socket; pending CSI is bounded256 chars.
-
-`clientInput(data)` removes complete duplicate secondaryDA responses (including the old xterm signature) from an input frame. It never waits for a later key: standalone Escape, arrows, interrupts, Enter and ordinary pasted text pass immediately. Literal visible `0;276;0c` text remains unchanged. Existing prompt/history is retained. Gateway enforces `forceRestart:true` for plain-shell init from older APKs as well, preserving the actual tmux shell.0.4.1 clients benefit from0.4.2 server deployment without installing a new APK.
-
-Acceptance must inject stale replies at0/1800/5000ms and use an old init with forceRestart:false, assert zero phone DA queries/visible garbage, same shell PID and persistent variable. Historical immediate-only replay test is insufficient; `check-terminal-replay.mjs` now routes to `check-terminal-negotiation.mjs`. All tests use only newly created test directories/panes.
-
-## 0.4.3 conversation identity and rename
-
-Authenticated GET `/api/conversations/:id` returns `Conversation`, canonical app ID and no-store. PUT same path `{title:string}` trims/nonempty/max200 and returns updated Conversation. Claude uses native summary rename; owned Codex persists optional title/projectDisplayName in existing mode600 sessions metadata, mirrors native rename best-effort, and overlays titles in recent results. New optional fields preserve legacy metadata. No new project catalog or filesystem/work-directory mutation. Rename is allowed during a turn because it does not change execution.
-
-Resolver accepts native aliases: CloudCLI detail's sessionId is canonical; owned Codex resolves threadId to app ID. Existing owned metadata/history remains authoritative if the upstream catalog row disappeared; local title can still be renamed and orphan record explicitly deleted. Missing non-owned/removed local session410, expired upstream authorization401/403, other unavailable detail502 with actionable messages. Do not fabricate a blank conversation for a deleted notice.
-
-Notice tap resolves session/job before read/navigation; failure keeps inbox open with a visible inline error. Native cold/warm path uses the same resolver. Header usage icon retains44px touch area and existing quota sheet; active chat unmounts only bottom navigation and removes its reserved height. Chat stays keyed by session ID, so rename preserves draft, attachments and live connection. Provider card settings stay vertically centered.
-
-## 0.4.4 conversation fidelity and alert health
-
-The recent list canonicalizes owned Codex native thread aliases to the app session ID, deduplicates by provider and identity, includes owned orphan records, and preserves independent same-name sessions. Canonical deletion guards both IDs and removes both catalog references after native archive. New-session submission has a synchronous guard.
-
-`shared/chat-presentation.ts` reconciles text and thinking deltas with completed snapshots using item/channel identity. Codex forwards `item/reasoning/summaryTextDelta`, `textDelta` and completed `reasoning.summary/content` arrays; summary and returned reasoning remain separate collapsible cards. Only provider-returned readable content is shown. Live replay no longer discards the first part at 2000 events. Owned history supports limit1..500/offset0..1000000 and `nextOffset`; it expands backward to a user/turn boundary so a long reasoning item is complete. Earlier pages prepend without resetting the live cursor. CloudCLI uses its tail offset pagination.
-
-Chat uses app-owned React components over CloudCLI/Codex, with GFM tables/task lists/strikethrough, semantic headings/lists/quotes and selectable language-labelled code blocks with explicit copy. Raw HTML is skipped; only HTTP(S) external links open. Interaction references: [HAPI Markdown/reasoning](https://github.com/tiann/hapi/tree/65c8dc727a55b8bc14b8a17fc6ded6ca5846dd9d/web/src/components/assistant-ui), [Paseo Markdown contract](https://github.com/getpaseo/paseo/blob/902b0c7a1637cc7a6c2ee268dca8161965a35def/docs/markdown-renderer.md). Product source was not copied.
-
-Native status separates app notification permission, task/approval channel availability/importance, service running, last sync/error and last posted alert. A test notification uses the same alert channel; it never creates a server event or approves anything. Reopening the App resumes only a previously enabled monitor; explicit pause remains paused. Initial sync suppresses completions older than the persisted enable timestamp, while delivering completions between enable and first sync. A disabled alerts channel retains the cursor until restored; generic labels, Keystore auth and private notifications remain unchanged. A visible ongoing monitor does not prove that the independent alert channel is enabled or audible.
-
-## 0.4.5 usage disclosure and guided configuration
-
-Account Token totals/daily rows and per-session statistics are default-closed disclosures. Session statistics load only after expansion. Authenticated no-store GET `/api/usage/sessions?provider=&search=&offset=0&limit=50` returns `{items,total,hasMore,warning?}`; limit1..100, offset0..10000, search max200. Rows join at most100 recent catalog names plus owned Codex metadata with the existing1000-snapshot store. Canonical aliases select the latest reported snapshot, never add duplicate totals. Unknown old titles are labelled historical; an upstream catalog outage retains reported usage. Single-session reads use the same canonical selection and retain the last snapshot if Claude refresh is unavailable. Codex is cumulative thread usage; Claude remains a context snapshot, with unreported values unknown and genuine zero retained.
-
-`shared/config-fields.ts` owns guided field projection and draft merging. It maps model/effort plus explicit preserve-current/official/custom connection choices to native JSON/TOML keys. Codex custom providers support Responses base URL, internal provider ID, direct bearer token or an existing server environment variable; Claude supports Messages base URL and Bearer/X-Api-Key selection. Endpoint formats follow [CC-Switch editing guidance](https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/2-providers/2.3-edit.md); Codex fields were checked against the [0.164.0 schema](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/core/config.schema.json) and Claude against its [environment variable reference](https://code.claude.com/docs/en/env-vars). Product implementation is independent.
-
-Unchanged guided input retains the exact source; actual guided edits normalize formatting and may remove TOML comments, as shown in the form. Unrelated MCP/plugins/hooks/permissions/provider entries retain their values. Existing model/effort environment overrides synchronize when those fields change. Advanced command/cloud/header authentication remains in source mode. Changing an endpoint/provider ID clears the form secret; credentials stay masked by default and drafts never persist locally. Official connection selection does not perform login or edit auth files. Switching to source applies valid guided fields to the local draft; only explicit save uses the existing revision-checked, fixed-file, private atomic API. Saving does not restart an active agent. In chat, server-default model/effort is passed as null to Codex rather than overriding config with catalog defaults; explicit selections still override it.
-
-Config save/reread actions have static document layout rather than the approval panel's sticky footer. The textarea has an IME-friendly minimum height and internal scrolling. Native acceptance uses intercepted fixture configuration only, verifies an actual Android keyboard and measured zero overlap, and restores the dedicated emulator's keyboard preference. Never save test configuration into the real AI homes for layout verification.
+不在响应/日志泄露原始密钥。不得通过关闭 TLS、自动批准、重建 PTY 或按可见字符串过滤输出来掩盖问题。基础质量门、慢网协商回归、Android 实际 IME 与真实模型验收的区别见 [验证记录](validation.md)。

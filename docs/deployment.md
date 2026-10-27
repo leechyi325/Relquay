@@ -1,119 +1,119 @@
 # 自托管部署与维护
 
-部署前准备一台 Ubuntu ARM64 主机、自己的域名和 TLS 证书。示例入口使用 `https://workspace.example.com:28443`；请替换为你管理的域名。网关、CloudCLI、FileBrowser 和 Caddy 管理接口应仅监听回环。
+适用版本：**0.4.5 / Android versionCode 12**。[返回首页](../README.md) · [使用指南](user-guide.md) · [验证记录](validation.md)
 
-## Ubuntu + systemd 部署
+## 部署拓扑与前提
 
-安装脚本保留 `COMPILEVERSE_ROOT` 作为既有部署目录的兼容变量；新安装可指定自己的根目录。四个数据根目录 `project`、`inputs`、`outputs`、`logs` 应位于 `STUDIO_BASE` 下。
+当前部署路径经过 Ubuntu ARM64 + systemd 验证；服务器运行代理与任务，Android 打包可在另一台电脑完成。需要 Node.js ≥24、npm、tmux、构建工具、自己的域名和系统 CA 信任的 TLS 证书。上游版本由 [upstream/package.json](../upstream/package.json) 和锁文件固定：CloudCLI 1.37.5、Codex 0.164.0、Claude Code 2.1.310。
 
-默认服务名为 `compileverse-studio`、`compileverse-cloudcli`、`compileverse-filebrowser`、`compileverse-https`。Android 包标识当前为 `xyz.leechyi.compileverse`；已有安装升级时需使用相同签名，以保留登录和 Keystore。
+```text
+手机 / 浏览器 → HTTPS :28443 → Caddy
+                                → 网关 127.0.0.1:3080
+                                → CloudCLI 127.0.0.1:3001
+                                → 可选 FileBrowser 127.0.0.1:3081
+网关 → 本机 Codex App Server / 文件 / 队列 / tmux
+```
 
-服务器需要 Node ≥24、构建工具和 tmux；AI 客户端按 `upstream/package-lock.json` 安装。`install-server.sh` / `publish-https.sh` 适配 Ubuntu + systemd；部署前检查脚本中的根目录、服务用户和反代端口，并按自己的环境调整。
+HTTP 28080 用于跳转；Caddy 管理接口默认回环 2019。OCI 安全列表/NSG 和主机防火墙需要分别放行实际选择的公网端口；3001、3080、3081、2019 不对公网开放。AI 账号由本人完成授权，首次工作台账号私下创建，不提供公共注册入口。
+
+## 安装脚本的适用范围
+
+**当前脚本是既有实例的部署脚本，尚不是通用安装器。** 运行前阅读 [install-server.sh](../scripts/install-server.sh)、[bootstrap-owner.mjs](../scripts/bootstrap-owner.mjs)、[publish-https.sh](../scripts/publish-https.sh)，按目标机器调整并复核：
+
+| 假设 | 当前实现 |
+| --- | --- |
+| 用户和目录 | systemd 用户与初始账号为 `ubuntu`，多个生成脚本和 HTTPS 路径写死 `/home/ubuntu/compileverse/` |
+| 根目录变量 | 安装入口接受 `COMPILEVERSE_ROOT`，但它不会改写全部硬编码路径；仅设置该变量不足以迁移部署 |
+| 环境 | 需要既有根目录中的 `env.sh` 和相应 runtime；生成的启动脚本会引用它们 |
+| 下载架构 | HTTPS / FileBrowser 安装使用固定版本和摘要的 ARM64 二进制 |
+| 账号 | 引导账号凭据保存在私有 `studio/access.json`；不是任意用户的通用注册器 |
+| 防火墙 | HTTPS 脚本会增补配置端口，并移除历史 80/443 的指定 ACCEPT 规则；应先确认目标主机现有规则 |
+| TLS | 找到 `state/tls/fullchain.pem` 和 `privkey.pem` 时使用它们；缺失时回退 Caddy 内部证书，Android 默认不会信任 |
+
+脚本会写配置/服务并启停服务，不应用作常规升级命令。自托管时先完成用户、目录、运行环境、架构、证书和防火墙适配，在隔离机器验证，再安装；不要在其他业务主机上直接照搬执行。
+
+既有部署保留服务名 `compileverse-studio`、`compileverse-cloudcli`、`compileverse-filebrowser`、`compileverse-https`，用于升级兼容。产品名称仍为 RoamDeck。
+
+## 网关运行环境
+
+变量示例见 [.env.example](../.env.example)。网关不自动加载 dotenv，需由 shell、systemd 或启动脚本导出。下面是运行时变量；它们不保证自动替换安装脚本中的固定路径。
+
+| 变量 | 作用与默认值 |
+| --- | --- |
+| `STUDIO_BASE` | 初始项目/输入/输出/日志父目录；回退旧 `COMPILEVERSE_ROOT`，再回退 `/home/ubuntu/compileverse` |
+| `STUDIO_STATE` | 私有状态目录；默认应用目录 `.state`，生产建议独立设置 |
+| `STUDIO_HOST` / `STUDIO_PORT` | 默认 `127.0.0.1` / `3080` |
+| `STUDIO_ORIGIN` | 公网精确 origin；默认来自 `shared/config.json` |
+| `CLOUDCLI_URL` | 默认 `http://127.0.0.1:3001` |
+| `FILEBROWSER_URL` | 可选回环 FileBrowser 地址 |
+| `STUDIO_ENV_FILE` | 可选后台任务 shell 环境文件 |
+| `STUDIO_BROWSE_ROOTS` | 允许绑定的绝对目录，Linux 使用冒号分隔；默认运行用户 home 和 `STUDIO_BASE` |
+| `STUDIO_CLIENT_ORIGINS` | 其他工作台网页的精确来源，逗号分隔，含协议/域名/端口 |
+
+创建 `STUDIO_BASE` 下的 `project`、`inputs`、`outputs`、`logs`，确保运行用户有相应权限。模块修改后保存在状态文件中，升级应保留它。浏览器在 A 工作台连接 B 时由 B 允许 A 的网页来源；Android 固定应用来源已内置，无需通配 CORS。
+
+部署源码只传工具仓库。保留实例 `shared/config.json`，不要用仓库里的 `workspace.example.com` 覆盖实际域名。首次安装需要分别安装应用与上游锁定依赖，将上游 CLI 加入服务 PATH，并私下建立 CloudCLI 所有者；网关启动不等于已配置上游或登录 AI。
+
+## 升级既有实例
+
+1. 核对当前提交、应用版本、服务用户、路径、证书、签名和状态位置。将源码/静态文件及私有状态备份到 Web 根目录之外，备份限制为所有者可读写；保留旧 APK。
+2. 在独立 staging 目录安装锁定依赖、类型检查、测试并构建。前后端按同一版本发布；若修改原生或内置 UI，重新构建同签名 APK。
+3. 检查后台队列中排队/运行/取消中的任务、CloudCLI 运行会话及网关 Codex processing。确认全部空闲再重启网关；不要为发布强行打断用户任务。
+4. 分别发布服务源码和检查过的静态文件，保留私有状态、账号、TLS、实例配置及下载目录。复制时不要对整个运行目录执行 `--delete`；不要覆盖生产用户配置。
+5. 重启需要更新的服务；纯静态更新无需重启网关，文档改动无需重启或构建 APK。验证 HTTPS、版本、未登录受保护接口的 401、登录后基本功能及 APK 摘要。
+
+Vite 默认构建会清空 `dist`，其中若有发布的 `dist/downloads/` 会被一起删除。**不要在运行中的应用目录直接执行默认构建。** 在 staging 目录可使用独立输出：
 
 ```bash
 npm ci
-npm run build
-rsync -az --exclude .git --exclude node_modules --exclude .runtime \
-  --exclude .state --exclude private --exclude artifacts --exclude android \
-  ./ USER@YOUR_SERVER:STUDIO_ROOT/app/
+npm run typecheck
+npm test
+npm exec vite -- build --outDir .runtime/release-dist
 ```
 
-运行中的服务保留状态。需要更新网关时先检查活动会话/任务，再重启 `compileverse-studio`。纯静态界面更新无需重启网关。APK 单独复制至服务器 `studio/app/dist/downloads/`。
+此目录应先检查，再发布 `index.html` 和资源，保留运行目录的 downloads。不是完整通用部署命令；实际路径/服务按目标实例处理。依赖版本不随例行发布任意升级。
 
 ```bash
 sudo systemctl status compileverse-studio compileverse-cloudcli compileverse-filebrowser compileverse-https
 journalctl -u compileverse-studio -n 80 --no-pager
 ```
 
-## 凭据和备份
+上述服务名针对现有部署。查看日志应避免将用户消息、命令、凭据或认证响应复制到公开问题中。
 
-初始工作台密码位于 mode-600 `studio/access.json`，仅保存在服务器；不要提交到 Git 或复制到公开目录。AI 账号由每位用户本人在终端授权。
+## 备份与回滚
 
-备份 `studio/state/`、用户工作目录和 AI 用户配置；这些内容不提交 Git、不放入公开下载目录。tmux 支持断线续接；主机重启后原进程不保证恢复。网关重启后原运行队列项会标记中断。
+至少备份私有 `state/`、用户项目数据、原生 AI 用户配置/授权目录、必要的 CloudCLI 状态、部署环境、TLS 和原 APK 签名材料。`state/` 包括登录、模块、任务日志、Codex 会话、通知、Token 快照、附件及 Claude 停用 MCP 暂存；配置/暂存文件也可能含密钥。`access.json` 权限为 600，不放进 Git、APK 或静态下载目录。
 
-代码回滚恢复对应提交的源码/静态文件后重启网关；停止四个新增服务可停用工作台，保留状态与工程。
+回滚源码和静态资源到匹配版本后，再在空闲窗口重启网关。状态兼容性单独检查，不把旧备份直接覆盖到含新任务/文件的状态目录。tmux 可以保留断线会话，不保证主机重启后进程存活；网关重启会将原运行任务标记中断。
 
-## HTTPS 维护
+停止新增 systemd 服务可停用工作台，保留工程和状态。不要以清空账号目录、删除 shell 历史或重建 Keystore 作为常规升级步骤。
 
-证书应存放在 `studio/state/tls/fullchain.pem` / `privkey.pem`，并设置自动续签与到期提醒。DNS-01 的 TXT 记录按证书服务商说明配置；DNS 凭据和私钥不得提交到仓库。部署脚本优先保留已有证书文件。
+## TLS 与 DNS-01 维护
+
+公开入口使用浏览器和 Android 系统 CA 信任的证书；Android 不随仓库分发实例专用 CA 或私钥。仅改用不常见端口不会完成证书签发，也不会替代登录与 HTTPS。
+
+既有实例通过 Spaceship 手动添加 DNS-01 TXT 记录完成签发，**当前不是自动续签**。续签时需读取 ACME 客户端给出的新挑战值，在域名 DNS 面板更新 `_acme-challenge` TXT，确认公开权威解析返回新值，再按客户端流程完成签发、安装完整链/私钥并重载 Caddy。旧 TXT 不代表下一次挑战已完成。若要自动续签，需另行验证 DNS API 集成与受限凭据管理。
+
+现有路径为 `studio/state/tls/fullchain.pem` 与 `privkey.pem`。更新前保留可回退副本，校验域名、证书链、有效期及私钥权限，重载后从公网用正常 CA 验证。不要只检查磁盘文件或加 `-k` 便声称证书可用。到期时间与维护责任应保存在实例交付记录，并提前安排续签。
+
+## Android 构建
+
+需要 JDK 21、Android SDK 36、Gradle 8.14.3；脚本默认使用本机 Android Studio JDK 和 `.runtime/android-sdk`，可设置 `STUDIO_JAVA_HOME`、`STUDIO_ANDROID_SDK`，必要时用 `STUDIO_GRADLE` 指定 Gradle。
 
 ```bash
-studio="${STUDIO_ROOT:?Set STUDIO_ROOT to the server's RoamDeck directory}"
-domain="${STUDIO_DOMAIN:?Set STUDIO_DOMAIN to a DNS name you control}"
-"$studio/acme-source/acme.sh" --home "$studio/state/acme" --config-home "$studio/state/acme" \
-  --renew -d "$domain" --ecc --server letsencrypt \
-  --yes-I-know-dns-manual-mode-enough-go-ahead-please
-"$studio/acme-source/acme.sh" --home "$studio/state/acme" --config-home "$studio/state/acme" \
-  --install-cert -d "$domain" --ecc \
-  --key-file "$studio/state/tls/privkey.pem" --fullchain-file "$studio/state/tls/fullchain.pem" \
-  --reloadcmd 'sudo systemctl reload compileverse-https'
+VITE_STUDIO_ORIGIN=https://workspace.example.com:28443 npm run android:build
 ```
 
-Android 默认仅信任系统 CA，不随仓库分发实例专用 CA 或私钥。
+脚本执行构建、Capacitor 同步和 `assembleDebug`，输出 `artifacts/roamdeck-<版本>-debug.apk`，并验证签名和 SHA-256。`VITE_STUDIO_ORIGIN` 仅设置新安装的初始入口，已保存的服务器优先。APK 和生成的 Android assets 不提交 Git。
 
-## 0.2 升级
+0.4.5 使用 versionCode 12，包名继续为 `xyz.leechyi.compileverse`。升级需同包名同签名以保留 Keystore、服务器列表和提醒状态；备份签名材料并验证覆盖安装。当前交付是 debug APK，正式签名与商店发布另行配置。通知采用用户主动开启的 `specialUse` 前台服务，商店分发仍需按相应审核要求申报。
 
-保留 state、账号、签名与包标识。首次启动沿用四个旧文件根；用户首次修改模块后写入 state/file-modules.json。Android 旧 token 一次迁移到按 origin 分项的加密存储，不复制到新服务器。
+## 升级后的重点复核
 
-模块目录边界默认 home 与 STUDIO_BASE。若要绑定 `/srv/projects`，在网关服务环境配置 `STUDIO_BROWSE_ROOTS=/home/YOUR_USER:/srv/projects`。网页跨服务器使用时配置目标服务的 `STUDIO_CLIENT_ORIGINS` 为客户端网页的精确 scheme/host/port；Android 不需要额外开放来源。
+- 前后端和 Android 版本匹配；0.4.5 新增按会话统计与配置字段引导，旧 UI 不会因服务端升级自动替换。
+- 保留账号、模块、会话、Token 快照、通知游标和停用 MCP 暂存；旧会话没有用量快照时显示未知，不需要重建会话或重新授权全部账号。
+- 0.4.2 的终端协商主要在网关修复，旧 0.4.1 客户端也受益，升级后重连；0.4.4 的原生频道诊断和通知恢复需要安装新版 APK。
+- 新版配置保存栏随页面滚动；个人手机上复核输入法。布局验收使用临时 fixture，不向正式 AI 配置写测试密钥。
+- 检查通知权限、独立任务提醒频道和最近同步状态；常驻通知不能代替完成提醒验证。
 
-升级前检查 CloudCLI 运行会话、网关 Codex processing 和任务队列。只有全部空闲才重启网关。新接口要求前后端一并升级；备份原 app 源码/dist 与模块配置后发布，保留旧 APK。原生升级由相同 debug 签名验证。
-
-
-## 0.3 升级
-
-沿用包标识、签名与按服务器保存的 Keystore。Android versionCode 为 5。前后端需一起升级，保留原 state；新增的 notifications.json 与 token-usage.json 均为私有状态，不公开或提交。旧会话没有快照时显示尚未报告，不扫描历史文稿估算 Token。
-
-升级后在 Android 提醒中心主动开启后台监听并授权。FGS 类型 specialUse 的用途已写入 manifest；如以后发布到 Google Play，需另按商店审核要求申报该用途。当前交付为同签名 APK。服务器登录有效期仍为七天，过期需本人登录；不在后台自动保存密码或给 AI 授权。
-
-## Android 构建入口
-
-源码默认使用示例域名。自托管打包时设置 `VITE_STUDIO_ORIGIN=https://你的域名:28443 npm run android:build`，无需把实例域名改回共享源码。已有安装中的服务器列表不受默认值变更影响。
-
-0.3.1 增加“工作台设置 → Claude / Codex 配置文件”。编辑的是服务用户的全局 `config.toml` / `settings.json`，遵循 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`。保存只校验格式；运行中的代理不会被自动重启。
-
-## 0.4 扩展配置与备份
-
-Skills 默认写入服务用户 ~/.agents/skills（Codex）或 ~/.claude/skills（Claude）。MCP 使用各代理原生用户配置；Claude 全局关闭的连接暂存于工作台 state/claude-mcp-disabled.json，备份时保留它以便恢复开关。原配置文件与暂存文件均可能包含连接密钥，不能放进静态目录或 Git。
-
-插件管理调用 PATH 中固定的 codex/claude 命令，默认在服务用户 home 中运行；服务必须具备正常的 CLI、市场配置及所需账号权限。只设置用户级插件，不覆盖项目级配置。支持 CODEX_HOME / CLAUDE_CONFIG_DIR；配置变更不会自动终止已有轮次。
-
-可在服务运行环境执行 `node --import tsx scripts/check-extension-cli.mjs` 验证 CLI 兼容性。该脚本使用临时 CLI 配置目录与空测试插件，结束后清理，不修改正式账号目录。
-
-## 0.4.1 终端升级
-
-Android versionCode8，保持包标识与签名。快捷命令保存在设备 localStorage，按服务器 origin 隔离，随卸载或清除应用数据移除。旧命令历史保留；本次无服务器状态迁移。
-
-实际断线重连会替换 CloudCLI 的 tmux 附着客户端，原 shell 与进程继续运行。不要把 `forceRestart` 改成终止 tmux 会话。可设置 `STUDIO_SSH_TARGET` 后运行 `node scripts/check-terminal-replay.mjs`，只创建并清理独立测试会话，验证旧重播故障与新附着路径。Android 回归使用同一变量运行 `scripts/check-terminal-native.mjs`。
-
-服务器构建建议 `vite build --outDir .runtime/release-dist`，检查后发布静态文件；不要让默认清空 dist 的构建删除已发布的 `dist/downloads/`。实例的 shared/config.json、私有状态和凭据不从公共仓库覆盖。
-
-## 0.4.2 设备响应修复
-
-主要修复在服务器网关，已安装的0.4.1 App也受益；部署后重新连接终端。升级包versionCode9保持同包名和签名。已有输入和历史不被自动清除。
-
-除了重连，还必须验证延迟设备响应：`STUDIO_SSH_TARGET=USER@HOST node scripts/check-terminal-negotiation.mjs` 会创建独立目录与会话，注入迟到的设备响应，验证服务器本机协商、旧客户端保护、shell PID/变量保留，最后清理。不要捕获用户已有窗格来调试。网关重启仍需先确认任务与代理空闲。
-
-## 0.4.3 对话界面与会话信息
-
-前后端一并更新；Android versionCode10，同包名、同签名。新会话查询/重命名 API需要新版网关。Codex 原有 sessions.json 增加可选名称字段，保留旧目录、线程与历史；无需迁移或重新登录。界面资源内置在 APK中，安装0.4.3才能获得新的对话布局。
-
-`STUDIO_SSH_TARGET=USER@HOST node scripts/check-chat-native.mjs` 在独立命名目录创建无推理的 Claude/Codex 会话，验证重命名、键盘、系统返回、用量入口和 Codex 缺失目录记录的恢复；最后只删除自己的会话、项目记录和空测试文件夹。不要使用已有用户会话做破坏性验收。
-
-## 0.4.4 对话与系统提醒
-
-Android versionCode11，保持包名、签名、凭据及监听 cursor。界面与原生通知修复需要安装0.4.4，服务器同步升级以修复 Codex 别名会话与思考/历史读取。无需迁移已有会话；去重不按标题，也不删除项目文件。
-
-提醒中心显示系统监听状态，后台提醒设置可发送测试提醒、检查最近同步/提醒时间并打开“任务与批准提醒”频道。常驻监听是另一个频道；有常驻通知并不表示任务频道可弹出或响铃。系统停止进程后显式重开 App 会恢复此前开启的监听；主动暂停后不会自行开启。强停期间或系统严格省电仍可能延迟提醒。
-
-`node scripts/check-notification-health-native.mjs` 只在专用模拟器验证频道开关诊断、测试通知、恢复和首次同步窗口内的完成事件；按实际 UI 层级重新定位系统开关，不能重复使用开关变化前的坐标。配合既有 `check-notifications-native.mjs` 验证后台真实任务通知和点击跳转。测试不代替用户手机验收，也不声称已完成模型推理。
-
-## 0.4.5 用量与配置引导
-
-Android versionCode12，保留原包名、签名、Keystore、服务器列表和监听状态。网关与客户端同步更新以提供会话统计列表；原有 token-usage.json 无需迁移。
-
-Token 统计默认折叠，展开后可筛选、搜索、选择会话。Claude 未提供累计计数时显示上下文快照，不能当成累计消耗；本功能不扫描对话文本估算 Token。
-
-配置默认打开引导填写；可切到源码检查完整草稿。官方登录选项需要事先登录服务器客户端；自定义 API 的地址、模型和密钥以服务商文档为准，配置保存不等于连接测试成功。Codex 环境变量模式只填写变量名，值需配置到代理的服务进程环境。调整默认模型后，新建会话并选“服务器默认”；已有进程必要时需重启。正式配置与 auth 文件不作为验收样本。
-
-`STUDIO_IME_BASELINE=1 node scripts/check-config-usage-native.mjs` 用旧客户端记录键盘遮挡；不设该变量时验证新版引导/源码编辑与折叠的会话统计。脚本只在项目专用模拟器上拦截配置和用量 API，使用虚拟内容，不访问或保存正式 AI 配置。需要真实软键盘状态与编辑区/按钮矩形测量，不能仅用缩小浏览器窗口代替。
+可重复运行的验收脚本及其操作边界见 [验证记录](validation.md)。
