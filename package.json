@@ -2,6 +2,7 @@
   "name": "roamdeck",
   "version": "0.4.5",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -14,7 +15,8 @@
     "test": "tsx --test tests/*.test.ts",
     "test:ui": "node scripts/check-ui.mjs",
     "android:sync": "npm run build && cap sync android",
-    "android:build": "bash scripts/build-android.sh"
+    "android:build": "bash scripts/build-android.sh",
+    "server:package": "node scripts/package-server.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

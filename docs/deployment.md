@@ -16,9 +16,89 @@
 
 HTTP 28080 用于跳转；Caddy 管理接口默认回环 2019。OCI 安全列表/NSG 和主机防火墙需要分别放行实际选择的公网端口；3001、3080、3081、2019 不对公网开放。AI 账号由本人完成授权，首次工作台账号私下创建，不提供公共注册入口。
 
+## 新服务器安装入口
+
+[安装与首次连接](getting-started.md) 提供两条路线：Git 源码安装，或 `npm run server:package` 生成预构建网页 + 服务端源码的轻量 tar.gz。两者都在目标机安装锁定依赖，使用普通用户 home 下的独立程序/数据/账号目录；包不自带账号、node_modules、APK 或项目。
+
+初始化脚本支持 `STUDIO_ACCESS_FILE`、`STUDIO_OWNER_USERNAME`、`STUDIO_ORIGIN` 与回环 `CLOUDCLI_URL`。未设置时保留旧实例的账号名和文件路径。首次初始化不覆盖既有凭据，注册请求前先写权限 600 文件，网络异常时保留以便核对；旧账号缺少原凭据时不会自动重置。
+
+轻量包不是离线镜像、一键安装器或 systemd/TLS 自动化工具。源码构建需完整 Git checkout；从包运行服务不用 Git，但需 Node、npm、tmux 与联网安装依赖。包内保留源码供检查，测试/Android/CI 开发工作请使用完整仓库。
+
+## 通用 systemd 用户服务
+
+以下适用于安装指南中 `$HOME/roamdeck/app` 与 `$HOME/roamdeck/env.sh` 的新服务器路线，不改变现有 compileverse 服务。先确认两个前台进程已通过首次验证，退出它们再启动服务。
+
+```bash
+mkdir -p "$HOME/.config/systemd/user"
+cat > "$HOME/roamdeck/run-cloudcli.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$HOME/roamdeck/env.sh"
+cd "$ROAMDECK_APP"
+export HOST=127.0.0.1 SERVER_PORT=3001 NODE_ENV=production
+exec cloudcli
+SH
+cat > "$HOME/roamdeck/run-studio.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$HOME/roamdeck/env.sh"
+cd "$ROAMDECK_APP"
+exec ./node_modules/.bin/tsx server/index.ts
+SH
+chmod 700 "$HOME/roamdeck/run-cloudcli.sh" "$HOME/roamdeck/run-studio.sh"
+cat > "$HOME/.config/systemd/user/roamdeck-cloudcli.service" <<'UNIT'
+[Unit]
+Description=RoamDeck CloudCLI
+[Service]
+ExecStart=%h/roamdeck/run-cloudcli.sh
+Restart=on-failure
+RestartSec=5
+UMask=0077
+[Install]
+WantedBy=default.target
+UNIT
+cat > "$HOME/.config/systemd/user/roamdeck-studio.service" <<'UNIT'
+[Unit]
+Description=RoamDeck gateway
+After=roamdeck-cloudcli.service
+Wants=roamdeck-cloudcli.service
+[Service]
+ExecStart=%h/roamdeck/run-studio.sh
+Restart=on-failure
+RestartSec=5
+UMask=0077
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable --now roamdeck-cloudcli roamdeck-studio
+sudo loginctl enable-linger "$USER"
+systemctl --user status roamdeck-cloudcli roamdeck-studio
+```
+
+`enable-linger` 让该用户的服务在退出 SSH 后及开机时由用户管理器维持；需要系统管理员权限。使用 `journalctl --user -u roamdeck-studio -n 80 --no-pager` 排查，不把输出中的用户数据公开。Node 应来自登录 shell 可用的稳定路径，更新 Node 后检查两个服务的 PATH。TLS 反代独立管理；FileBrowser 高级入口可选，未配置时基本文件管理照常使用。
+
+## 新服务器的 HTTPS 反向代理
+
+如已有 Caddy、Nginx 或其他代理，可复用。下面是已有 Caddy 上的站点片段，替换域名、证书路径，并让 Caddy 运行用户能读取证书：
+
+```caddyfile
+https://workspace.example.com:28443 {
+  tls /path/to/fullchain.pem /path/to/privkey.pem
+  request_body {
+    max_size 520MB
+  }
+  reverse_proxy 127.0.0.1:3080
+}
+```
+
+Caddy 的 [reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) 支持 WebSocket。使用独立配置验证 `caddy validate --config /path/to/Caddyfile --adapter caddyfile`，通过后合并/加载到自己的代理；不要直接替换其他业务站点。放行实际 HTTPS 端口，在 `STUDIO_ORIGIN` 中使用完全一致的 origin，然后从公网用正常 CA 验证健康接口。
+
+若标准 80/443 可用且满足域名解析、可写持久数据等条件，可选择 Caddy [自动 HTTPS](https://caddyserver.com/docs/automatic-https)。上面显式加载证书的片段不代你签发或续签；非标准公网端口通常另配 DNS-01 并负责续签。不能将当前实例的手动 Spaceship TXT 验证等同于自动续签。
+
 ## 安装脚本的适用范围
 
-**当前脚本是既有实例的部署脚本，尚不是通用安装器。** 运行前阅读 [install-server.sh](../scripts/install-server.sh)、[bootstrap-owner.mjs](../scripts/bootstrap-owner.mjs)、[publish-https.sh](../scripts/publish-https.sh)，按目标机器调整并复核：
+**旧 `install-server.sh` / `publish-https.sh` 是既有实例的部署脚本，尚不是通用安装器。** 新服务器优先使用 安装指南的手动安装路线。 运行前阅读 [install-server.sh](../scripts/install-server.sh)、[bootstrap-owner.mjs](../scripts/bootstrap-owner.mjs)、[publish-https.sh](../scripts/publish-https.sh)，按目标机器调整并复核：
 
 | 假设 | 当前实现 |
 | --- | --- |

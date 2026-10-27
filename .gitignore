@@ -39,3 +39,6 @@ android/capacitor-cordova-android-plugins/
 *.webm
 *.wav
 *.mp3
+
+# Local development instructions are not part of the public repository.
+/AGENTS.md

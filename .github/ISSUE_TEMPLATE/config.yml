@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用指南与故障排查
+    url: https://github.com/leechyi325/RoamDeck/blob/main/docs/user-guide.md
+    about: 安装完成后的会话、文件、终端、用量与通知问题。
+  - name: 安全反馈
+    url: https://github.com/leechyi325/RoamDeck/blob/main/SECURITY.md
+    about: 敏感安全问题请先查看私密反馈流程。
