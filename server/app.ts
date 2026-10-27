@@ -86,6 +86,22 @@ export function createStudio(config: Config) {
       throw new HttpError(502, '暂时无法打开会话，请稍后重试');
     }
   };
+  function recentConversations(items: Conversation[]) {
+    const canonical = new Map<string, Conversation>();
+    for (const item of items) {
+      if (codex.has(item.sessionId) && !codex.sessions.get(item.sessionId)?.title && item.sessionTitle) codex.setInfo(item.sessionId, item.sessionTitle, item.projectDisplayName);
+      const owned = item.provider === 'codex' ? codex.info(item.sessionId) : undefined;
+      const row = owned ? { ...item, ...owned, lastActivity: owned.lastActivity ?? item.lastActivity } : item;
+      canonical.set(row.provider + ':' + row.sessionId, row);
+    }
+    // CloudCLI can independently discover the native thread behind an app session.
+    // Identity, never display name or directory, determines whether rows are aliases.
+    for (const session of codex.sessions.values()) {
+      const key = 'codex:' + session.id;
+      if (!canonical.has(key)) canonical.set(key, codex.info(session.id)!);
+    }
+    return [...canonical.values()].sort((a, b) => (Date.parse(b.lastActivity ?? '') || 0) - (Date.parse(a.lastActivity ?? '') || 0));
+  }
   const getSession = (token?: string) => {
     const session = token ? sessions.get(token) : undefined;
     if (!session || session.expires < Date.now()) throw new HttpError(401, '请重新登录工作台');
@@ -117,15 +133,29 @@ export function createStudio(config: Config) {
   });
   app.get('/api/me', (_req, res) => res.json({ username: res.locals.session.username }));
   app.get('/api/usage/accounts', asyncRoute(async (_req, res) => res.json({ accounts: await Promise.all([codex.accountUsage(), claudeQuota.read()]) })));
+  app.get('/api/usage/sessions', asyncRoute(async (req, res) => {
+    const query = z.object({ provider: z.enum(['claude', 'codex']).optional(), search: z.string().max(200).default(''), offset: z.coerce.number().int().min(0).max(10000).default(0), limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(req.query);
+    let known: Conversation[] = [], warning: string | undefined;
+    try { known = (await cloud('/providers/sessions/recent?limit=100', res.locals.session.cloudToken)).data.conversations; }
+    catch { warning = '暂未同步会话名称，已保留本服务器报告的统计'; }
+    const search = query.search.trim().toLocaleLowerCase();
+    const rows = usage.sessions(recentConversations(known), id => codex.resolveId(id)).filter(row => (!query.provider || row.provider === query.provider) && (!search || [row.title, row.projectName, row.sessionId].some(value => value.toLocaleLowerCase().includes(search))));
+    res.set('Cache-Control', 'no-store'); res.json({ items: rows.slice(query.offset, query.offset + query.limit), total: rows.length, hasMore: rows.length > query.offset + query.limit, warning });
+  }));
   app.get('/api/usage/sessions/:id', asyncRoute(async (req, res) => {
-    const id = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(req.params.id);
-    if (!codex.has(id)) {
+    const id = codex.resolveId(conversationId.parse(req.params.id));
+    const cached = usage.forSession(id, value => codex.resolveId(value));
+    if (cached?.provider === 'claude') {
+      try { usage.set(id, claudeTokens((await cloud('/providers/sessions/' + id + '/token-usage', res.locals.session.cloudToken)).data)); } catch { /* Retain the last reported snapshot if the session is unavailable. */ }
+    } else if (!codex.has(id) && !cached) {
       const session = await cloud('/providers/sessions/' + id, res.locals.session.cloudToken);
       if (session.data.provider === 'claude') {
         try { usage.set(id, claudeTokens((await cloud('/providers/sessions/' + id + '/token-usage', res.locals.session.cloudToken)).data)); } catch { /* Keep the last actually reported snapshot. */ }
       }
     }
-    res.json({ snapshot: usage.get(id), reason: usage.get(id) ? undefined : '首轮返回用量后显示；尚未报告的数据不会估算' });
+    res.set('Cache-Control', 'no-store');
+    const snapshot = usage.forSession(id, value => codex.resolveId(value));
+    res.json({ snapshot, reason: snapshot ? undefined : '首轮返回用量后显示；尚未报告的数据不会估算' });
   }));
   app.get('/api/notifications', (req, res, next) => { try { observer.start(); const after = z.coerce.number().int().nonnegative().optional().parse(req.query.after); res.json(notices.page(after)); } catch(e) { next(e); } });
   app.get('/api/notifications/:id', (req, res, next) => { try { res.json(notices.get(String(req.params.id))); } catch(e) { next(e); } });
@@ -231,20 +261,7 @@ export function createStudio(config: Config) {
     }
     const data = await cloud(req.url, res.locals.session.cloudToken, { method: req.method, ...(req.method === 'GET' ? {} : { body: JSON.stringify(req.body) }) });
     if (req.method === 'GET' && req.path === '/providers/sessions/recent' && Array.isArray(data.data?.conversations)) {
-      const canonical = new Map<string, Conversation>();
-      for (const item of data.data.conversations as Conversation[]) {
-        if (codex.has(item.sessionId) && !codex.sessions.get(item.sessionId)?.title && item.sessionTitle) codex.setInfo(item.sessionId, item.sessionTitle, item.projectDisplayName);
-        const owned = item.provider === 'codex' ? codex.info(item.sessionId) : undefined;
-        const row = owned ? { ...item, ...owned, lastActivity: owned.lastActivity ?? item.lastActivity } : item;
-        canonical.set(row.provider + ':' + row.sessionId, row);
-      }
-      // CloudCLI can independently discover the native thread behind an app session.
-      // Identity, never display name or directory, determines whether rows are aliases.
-      for (const session of codex.sessions.values()) {
-        const key = 'codex:' + session.id;
-        if (!canonical.has(key)) canonical.set(key, codex.info(session.id)!);
-      }
-      data.data.conversations = [...canonical.values()].sort((a, b) => (Date.parse(b.lastActivity ?? '') || 0) - (Date.parse(a.lastActivity ?? '') || 0));
+      data.data.conversations = recentConversations(data.data.conversations);
     }
     if (req.method === 'POST' && req.path === '/providers/sessions' && req.body.provider === 'codex') codex.register(data.data.sessionId, req.body.projectPath);
     res.json(data);

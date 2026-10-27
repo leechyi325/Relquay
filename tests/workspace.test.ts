@@ -90,4 +90,8 @@ test('Codex model/effort/image inputs and user question reply survive replay wit
   assert.throws(() => bridge.approve(String(event.requestId), true));
   assert.equal(bridge.approve(String(event.requestId), true, { color: { answers: ['深蓝'] } }), true); assert.equal(bridge.approve(String(event.requestId), true, {}), false);
   await until(() => !bridge.sessions.get('mobile')!.processing); assert.ok(bridge.history('mobile').messages.some(message => message.content?.includes('深蓝')));
+  await bridge.send('mobile', 'use server config'); await until(() => bridge.approvals.size === 1);
+  const defaults = (await fs.readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(frame => frame.method === 'turn/start').at(-1);
+  assert.equal(defaults.params.model, null); assert.equal(defaults.params.effort, null);
+  await bridge.abort('mobile');
 });

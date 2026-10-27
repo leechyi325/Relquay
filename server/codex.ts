@@ -165,7 +165,7 @@ export class CodexBridge {
       } else if (!this.loaded.has(session.threadId)) {
         await this.request('thread/resume', { threadId: session.threadId, excludeTurns: true, ...config }); this.loaded.add(session.threadId);
       }
-      const result = await this.request<{ turn: { id: string } }>('turn/start', { threadId: session.threadId, input: [{ type: 'text', text: withFileReferences(content, attachments) }, ...attachments.filter(nativeImage).map(item => ({ type: 'localImage', path: item.path }))], model: model ?? selected?.id ?? null, effort: effort ?? selected?.defaultEffort ?? null });
+      const result = await this.request<{ turn: { id: string } }>('turn/start', { threadId: session.threadId, input: [{ type: 'text', text: withFileReferences(content, attachments) }, ...attachments.filter(nativeImage).map(item => ({ type: 'localImage', path: item.path }))], model: model ?? null, effort: effort ?? null });
       session.turnId = result.turn.id; this.persist();
     } catch(e) { if (session.processing) this.finish(session, false, String(e)); }
   }

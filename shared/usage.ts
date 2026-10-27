@@ -40,3 +40,6 @@ export function claudeAccount(value: unknown): AccountUsage {
   for (const [id, input] of Object.entries(usage)) { const parsed = row.safeParse(input); if (parsed.success) windows.push({ id, name: names[id] ?? id, usedPercent: Math.max(0, Math.min(100, parsed.data.utilization)), resetsAt: parsed.data.resets_at ?? undefined, durationMinutes: id === 'five_hour' ? 300 : id.startsWith('seven_day') ? 10080 : undefined }); }
   return { provider: 'claude', status: windows.length ? 'available' : 'unavailable', source: 'Claude OAuth usage', updatedAt: new Date().toISOString(), windows, reason: windows.length ? undefined : '当前登录方式未提供账号额度窗口' };
 }
+
+export type SessionUsage = { sessionId: string; provider: 'claude' | 'codex'; title: string; projectName: string; snapshot: TokenSnapshot | null };
+export type SessionUsagePage = { items: SessionUsage[]; total: number; hasMore: boolean; warning?: string };

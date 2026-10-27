@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { codexTokens, claudeTokens, claudeAccount, unavailableUsage, tokenSnapshotSchema, type TokenSnapshot, type AccountUsage } from '../shared/usage.ts';
+import type { Conversation } from '../shared/protocol.ts';
+import type { SessionUsage } from '../shared/usage.ts';
 import type { ChatEvent } from '../shared/protocol.ts';
 
 export class UsageStore {
@@ -11,6 +13,24 @@ export class UsageStore {
     if (fs.existsSync(this.filename)) for (const [id, snapshot] of Object.entries(JSON.parse(fs.readFileSync(this.filename, 'utf8')))) { const parsed = tokenSnapshotSchema.safeParse(snapshot); if (parsed.success) this.snapshots.set(id, parsed.data); }
   }
   get(id: string) { return this.snapshots.get(id) ?? null; }
+  forSession(id: string, canonical: (id: string) => string) {
+    let snapshot = this.get(id);
+    for (const [alias, value] of this.snapshots) if (value.provider === 'codex' && canonical(alias) === id && (!snapshot || value.updatedAt > snapshot.updatedAt)) snapshot = value;
+    return snapshot;
+  }
+  sessions(conversations: Conversation[], canonical: (id: string) => string): SessionUsage[] {
+    const rows = new Map<string, SessionUsage>();
+    for (const [id, snapshot] of this.snapshots) {
+      const sessionId = snapshot.provider === 'codex' ? canonical(id) : id, key = snapshot.provider + ':' + sessionId;
+      const previous = rows.get(key);
+      if (!previous || snapshot.updatedAt > previous.snapshot!.updatedAt) rows.set(key, { sessionId, provider: snapshot.provider, title: '历史会话 · ' + sessionId.slice(0, 12), projectName: '已报告的会话', snapshot });
+    }
+    for (const item of conversations) {
+      const key = item.provider + ':' + item.sessionId;
+      rows.set(key, { sessionId: item.sessionId, provider: item.provider, title: item.sessionTitle, projectName: item.projectDisplayName, snapshot: rows.get(key)?.snapshot ?? null });
+    }
+    return [...rows.values()].sort((a, b) => (b.snapshot?.updatedAt ?? '').localeCompare(a.snapshot?.updatedAt ?? ''));
+  }
   set(id: string, value: TokenSnapshot) {
     this.snapshots.delete(id); this.snapshots.set(id, value);
     if (this.snapshots.size > 1000) this.snapshots.delete(this.snapshots.keys().next().value!);
