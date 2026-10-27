@@ -1,6 +1,8 @@
 # 自托管部署与维护
 
-适用版本：**0.4.5 / Android versionCode 12**。[返回首页](../README.md) · [使用指南](user-guide.md) · [验证记录](validation.md)
+适用版本：**0.4.6 / Android versionCode 13**。[返回首页](../README.md) · [使用指南](user-guide.md) · [验证记录](validation.md)
+
+0.4.6 产品名改为 Relquay · 云渡。已有安装保留原目录、服务名、状态与环境变量值；无需重装服务器或清除 App 数据。新安装示例使用 `relquay` 目录，新构建 APK/服务端包使用同名前缀。GitHub 仓库现为 `leechyi325/Relquay`；已有本地 clone 可更新 origin，实例路径不随仓库名自动迁移。
 
 ## 部署拓扑与前提
 
@@ -26,44 +28,44 @@ HTTP 28080 用于跳转；Caddy 管理接口默认回环 2019。OCI 安全列表
 
 ## 通用 systemd 用户服务
 
-以下适用于安装指南中 `$HOME/roamdeck/app` 与 `$HOME/roamdeck/env.sh` 的新服务器路线，不改变现有 compileverse 服务。先确认两个前台进程已通过首次验证，退出它们再启动服务。
+以下适用于安装指南中 `$HOME/relquay/app` 与 `$HOME/relquay/env.sh` 的新服务器路线，不改变现有 compileverse 服务。先确认两个前台进程已通过首次验证，退出它们再启动服务。
 
 ```bash
 mkdir -p "$HOME/.config/systemd/user"
-cat > "$HOME/roamdeck/run-cloudcli.sh" <<'SH'
+cat > "$HOME/relquay/run-cloudcli.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-source "$HOME/roamdeck/env.sh"
-cd "$ROAMDECK_APP"
+source "$HOME/relquay/env.sh"
+cd "$RELQUAY_APP"
 export HOST=127.0.0.1 SERVER_PORT=3001 NODE_ENV=production
 exec cloudcli
 SH
-cat > "$HOME/roamdeck/run-studio.sh" <<'SH'
+cat > "$HOME/relquay/run-studio.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-source "$HOME/roamdeck/env.sh"
-cd "$ROAMDECK_APP"
+source "$HOME/relquay/env.sh"
+cd "$RELQUAY_APP"
 exec ./node_modules/.bin/tsx server/index.ts
 SH
-chmod 700 "$HOME/roamdeck/run-cloudcli.sh" "$HOME/roamdeck/run-studio.sh"
-cat > "$HOME/.config/systemd/user/roamdeck-cloudcli.service" <<'UNIT'
+chmod 700 "$HOME/relquay/run-cloudcli.sh" "$HOME/relquay/run-studio.sh"
+cat > "$HOME/.config/systemd/user/relquay-cloudcli.service" <<'UNIT'
 [Unit]
-Description=RoamDeck CloudCLI
+Description=Relquay CloudCLI
 [Service]
-ExecStart=%h/roamdeck/run-cloudcli.sh
+ExecStart=%h/relquay/run-cloudcli.sh
 Restart=on-failure
 RestartSec=5
 UMask=0077
 [Install]
 WantedBy=default.target
 UNIT
-cat > "$HOME/.config/systemd/user/roamdeck-studio.service" <<'UNIT'
+cat > "$HOME/.config/systemd/user/relquay-studio.service" <<'UNIT'
 [Unit]
-Description=RoamDeck gateway
-After=roamdeck-cloudcli.service
-Wants=roamdeck-cloudcli.service
+Description=Relquay gateway
+After=relquay-cloudcli.service
+Wants=relquay-cloudcli.service
 [Service]
-ExecStart=%h/roamdeck/run-studio.sh
+ExecStart=%h/relquay/run-studio.sh
 Restart=on-failure
 RestartSec=5
 UMask=0077
@@ -71,12 +73,12 @@ UMask=0077
 WantedBy=default.target
 UNIT
 systemctl --user daemon-reload
-systemctl --user enable --now roamdeck-cloudcli roamdeck-studio
+systemctl --user enable --now relquay-cloudcli relquay-studio
 sudo loginctl enable-linger "$USER"
-systemctl --user status roamdeck-cloudcli roamdeck-studio
+systemctl --user status relquay-cloudcli relquay-studio
 ```
 
-`enable-linger` 让该用户的服务在退出 SSH 后及开机时由用户管理器维持；需要系统管理员权限。使用 `journalctl --user -u roamdeck-studio -n 80 --no-pager` 排查，不把输出中的用户数据公开。Node 应来自登录 shell 可用的稳定路径，更新 Node 后检查两个服务的 PATH。TLS 反代独立管理；FileBrowser 高级入口可选，未配置时基本文件管理照常使用。
+`enable-linger` 让该用户的服务在退出 SSH 后及开机时由用户管理器维持；需要系统管理员权限。使用 `journalctl --user -u relquay-studio -n 80 --no-pager` 排查，不把输出中的用户数据公开。Node 应来自登录 shell 可用的稳定路径，更新 Node 后检查两个服务的 PATH。TLS 反代独立管理；FileBrowser 高级入口可选，未配置时基本文件管理照常使用。
 
 ## 新服务器的 HTTPS 反向代理
 
@@ -112,7 +114,7 @@ Caddy 的 [reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reve
 
 脚本会写配置/服务并启停服务，不应用作常规升级命令。自托管时先完成用户、目录、运行环境、架构、证书和防火墙适配，在隔离机器验证，再安装；不要在其他业务主机上直接照搬执行。
 
-既有部署保留服务名 `compileverse-studio`、`compileverse-cloudcli`、`compileverse-filebrowser`、`compileverse-https`，用于升级兼容。产品名称仍为 RoamDeck。
+既有部署保留服务名 `compileverse-studio`、`compileverse-cloudcli`、`compileverse-filebrowser`、`compileverse-https`，用于升级兼容。产品名称现为 Relquay · 云渡；既有安装保留原路径、服务名和数据。
 
 ## 网关运行环境
 
@@ -184,13 +186,13 @@ journalctl -u compileverse-studio -n 80 --no-pager
 VITE_STUDIO_ORIGIN=https://workspace.example.com:28443 npm run android:build
 ```
 
-脚本执行构建、Capacitor 同步和 `assembleDebug`，输出 `artifacts/roamdeck-<版本>-debug.apk`，并验证签名和 SHA-256。`VITE_STUDIO_ORIGIN` 仅设置新安装的初始入口，已保存的服务器优先。APK 和生成的 Android assets 不提交 Git。
+脚本执行构建、Capacitor 同步和 `assembleDebug`，输出 `artifacts/relquay-<版本>-debug.apk`，并验证签名和 SHA-256。`VITE_STUDIO_ORIGIN` 仅设置新安装的初始入口，已保存的服务器优先。APK 和生成的 Android assets 不提交 Git。
 
-0.4.5 使用 versionCode 12，包名继续为 `xyz.leechyi.compileverse`。升级需同包名同签名以保留 Keystore、服务器列表和提醒状态；备份签名材料并验证覆盖安装。当前交付是 debug APK，正式签名与商店发布另行配置。通知采用用户主动开启的 `specialUse` 前台服务，商店分发仍需按相应审核要求申报。
+0.4.6 使用 versionCode 13，包名继续为 `xyz.leechyi.compileverse`。升级需同包名同签名以保留 Keystore、服务器列表和提醒状态；备份签名材料并验证覆盖安装。当前交付是 debug APK，正式签名与商店发布另行配置。通知采用用户主动开启的 `specialUse` 前台服务，商店分发仍需按相应审核要求申报。
 
 ## 升级后的重点复核
 
-- 前后端和 Android 版本匹配；0.4.5 新增按会话统计与配置字段引导，旧 UI 不会因服务端升级自动替换。
+- 前后端和 Android 版本匹配；0.4.6 新增按会话统计与配置字段引导，旧 UI 不会因服务端升级自动替换。
 - 保留账号、模块、会话、Token 快照、通知游标和停用 MCP 暂存；旧会话没有用量快照时显示未知，不需要重建会话或重新授权全部账号。
 - 0.4.2 的终端协商主要在网关修复，旧 0.4.1 客户端也受益，升级后重连；0.4.4 的原生频道诊断和通知恢复需要安装新版 APK。
 - 新版配置保存栏随页面滚动；个人手机上复核输入法。布局验收使用临时 fixture，不向正式 AI 配置写测试密钥。

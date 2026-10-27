@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="public/brand.svg" width="80" height="80" alt="RoamDeck 标志">
+  <img src="public/brand.svg" width="80" height="80" alt="Relquay 标志">
 </p>
 
-<h1 align="center">RoamDeck · 随行台</h1>
+<h1 align="center">Relquay · 云渡</h1>
 
 <p align="center"><strong>用手机，接续服务器上的 AI 开发工作。</strong><br>Self-hosted mobile workspace for Claude Code and Codex.</p>
 
 <p align="center">
-  <a href="https://github.com/leechyi325/RoamDeck/actions/workflows/ci.yml"><img src="https://github.com/leechyi325/RoamDeck/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/leechyi325/Relquay/actions/workflows/ci.yml"><img src="https://github.com/leechyi325/Relquay/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-293D50" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/Platform-Android%20%7C%20Web-B45E3C" alt="Android 与浏览器">
 </p>
@@ -15,14 +15,36 @@
 <p align="center">
   <a href="#服务端安装与使用">快速开始</a> ·
   <a href="docs/user-guide.md">使用指南</a> ·
+  <a href="#介绍视频">介绍视频</a> ·
   <a href="#界面预览">界面预览</a> ·
-  <a href="https://github.com/leechyi325/RoamDeck/issues">反馈问题</a> ·
+  <a href="https://github.com/leechyi325/Relquay/issues">反馈问题</a> ·
   <a href="#更新记录">更新记录</a>
 </p>
 
-RoamDeck 把 Claude Code、Codex、终端、文件和后台任务放进同一个手机工作台。电脑不在身边时，也能查看进度、回答问题、批准操作、修改文件，并预览结果。
+**Relquay · 云渡**（原 RoamDeck · 随行台）把 Claude Code、Codex、终端、文件和后台任务放进同一个手机工作台。电脑不在身边时，也能查看进度、回答问题、批准操作、修改文件，并预览结果。
 
 **代理和项目在你自己的服务器上运行，手机负责交互。** 支持 Android 手机、平板和浏览器，可连接多台独立部署的服务器。无需安装 Claude 手机 App，也不提供公共账号或 AI 调用额度。
+
+## 介绍视频
+
+工作在远端，掌握在手边。32 秒了解从手机发起任务、审阅批准，到预览结果和接收完成提醒的过程。
+
+https://github.com/user-attachments/assets/a9ee4023-a6ac-42a3-af42-4f8e4a35a56e
+
+[播放 / 下载完整 MP4](docs/media/relquay-intro.mp4) · [演示素材说明](docs/media/README.md)
+
+<details>
+<summary>动图预览与本地播放副本</summary>
+
+<p align="center">
+  <a href="docs/media/relquay-intro.mp4"><img src="docs/media/relquay-preview.gif" width="280" alt="Relquay · 云渡动画预览：手机连接远端工作台，批准操作并接收任务完成提醒"></a>
+</p>
+
+<p align="center"><a href="docs/media/relquay-intro.mp4">本地完整视频（含配乐，32 秒）</a> · <a href="docs/media/README.md">演示素材说明</a></p>
+
+</details>
+
+视频使用真实应用界面与虚构演示数据；通知功能需主动开启监听并授予系统权限。
 
 ## 能做什么
 
@@ -51,7 +73,9 @@ RoamDeck 把 Claude Code、Codex、终端、文件和后台任务放进同一个
 
 ## 服务端安装与使用
 
-当前源码版本 **0.4.5**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
+项目与 GitHub 仓库均已更名为 **Relquay · 云渡**。已有实例升级时保留原数据目录与服务名；本地仓库可运行 `git remote set-url origin https://github.com/leechyi325/Relquay.git` 更新远程地址。
+
+当前源码版本 **0.4.6**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
 
 ### 第一步：准备环境
 
@@ -64,8 +88,8 @@ RoamDeck 把 Claude Code、Codex、终端、文件和后台任务放进同一个
 在全新服务器的普通用户下运行：
 
 ```bash
-git clone https://github.com/leechyi325/RoamDeck.git "$HOME/roamdeck/app"
-cd "$HOME/roamdeck/app"
+git clone https://github.com/leechyi325/Relquay.git "$HOME/relquay/app"
+cd "$HOME/relquay/app"
 npm ci --include=dev
 npm ci --prefix upstream
 npm run build
@@ -84,13 +108,13 @@ npm run build
 
 只想先体验界面，可按安装指南使用 SSH 隧道在电脑浏览器访问回环服务；Android 的系统通知、输入法和后台行为需在 App 中体验。
 
-**安装包获取**：目前提供源码构建与本地打包流程，首页不预置实例地址或共享账号。若 [Releases](https://github.com/leechyi325/RoamDeck/releases) 尚无对应版本附件，请自行构建服务端包和 [Android APK](docs/deployment.md#android-构建)。修改网页后，已安装 App 仍需新 APK 才能更新内置界面。
+**安装包获取**：目前提供源码构建与本地打包流程，首页不预置实例地址或共享账号。若 [Releases](https://github.com/leechyi325/Relquay/releases) 尚无对应版本附件，请自行构建服务端包和 [Android APK](docs/deployment.md#android-构建)。修改网页后，已安装 App 仍需新 APK 才能更新内置界面。
 
 <details>
 <summary>展开完整服务端安装步骤（环境、账号、启动与手机连接）</summary>
 
 
-以下步骤面向全新服务器。已有实例请先看[升级流程](docs/deployment.md#升级既有实例)，不要直接覆盖生产目录。手机 App 是操作入口，服务器上的 RoamDeck、CloudCLI 和 AI 客户端才负责实际运行；无须安装 Claude 手机 App。
+以下步骤面向全新服务器。已有实例请先看[升级流程](docs/deployment.md#升级既有实例)，不要直接覆盖生产目录。手机 App 是操作入口，服务器上的 Relquay、CloudCLI 和 AI 客户端才负责实际运行；无须安装 Claude 手机 App。
 
 #### 1. 准备一台服务器
 
@@ -107,8 +131,8 @@ npm run build
 源码安装：
 
 ```bash
-git clone https://github.com/leechyi325/RoamDeck.git "$HOME/roamdeck/app"
-cd "$HOME/roamdeck/app"
+git clone https://github.com/leechyi325/Relquay.git "$HOME/relquay/app"
+cd "$HOME/relquay/app"
 npm ci --include=dev
 npm ci --prefix upstream
 npm run build
@@ -122,15 +146,15 @@ npm run build
 npm run server:package
 ```
 
-生成 `artifacts/roamdeck-server-0.4.5.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
+生成 `artifacts/relquay-server-0.4.6.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
 
 收到包与校验文件后，在两者所在目录执行：
 
 ```bash
-sha256sum -c roamdeck-server-0.4.5.tar.gz.sha256
-mkdir -p "$HOME/roamdeck/app"
-tar -xzf roamdeck-server-0.4.5.tar.gz --strip-components=1 -C "$HOME/roamdeck/app"
-cd "$HOME/roamdeck/app"
+sha256sum -c relquay-server-0.4.6.tar.gz.sha256
+mkdir -p "$HOME/relquay/app"
+tar -xzf relquay-server-0.4.6.tar.gz --strip-components=1 -C "$HOME/relquay/app"
+cd "$HOME/relquay/app"
 npm ci --include=dev
 npm ci --prefix upstream
 ```
@@ -142,52 +166,52 @@ npm ci --prefix upstream
 下面将程序、数据和账号分开，路径不依赖旧实例的 `/home/ubuntu/compileverse`。先把示例 `STUDIO_ORIGIN` 改成你将使用的 HTTPS 域名与端口：
 
 ```bash
-mkdir -p "$HOME/roamdeck"
-cat > "$HOME/roamdeck/env.sh" <<'SH'
-export ROAMDECK_APP="$HOME/roamdeck/app"
-export PATH="$ROAMDECK_APP/upstream/node_modules/.bin:$PATH"
-export STUDIO_BASE="$HOME/roamdeck/workspace"
-export STUDIO_STATE="$HOME/roamdeck/state"
-export STUDIO_ACCESS_FILE="$HOME/roamdeck/access.json"
+mkdir -p "$HOME/relquay"
+cat > "$HOME/relquay/env.sh" <<'SH'
+export RELQUAY_APP="$HOME/relquay/app"
+export PATH="$RELQUAY_APP/upstream/node_modules/.bin:$PATH"
+export STUDIO_BASE="$HOME/relquay/workspace"
+export STUDIO_STATE="$HOME/relquay/state"
+export STUDIO_ACCESS_FILE="$HOME/relquay/access.json"
 export STUDIO_OWNER_USERNAME=owner
 export STUDIO_HOST=127.0.0.1
 export STUDIO_PORT=3080
 export CLOUDCLI_URL=http://127.0.0.1:3001
 export STUDIO_ORIGIN=https://workspace.example.com:28443
-export STUDIO_ENV_FILE="$HOME/roamdeck/env.sh"
+export STUDIO_ENV_FILE="$HOME/relquay/env.sh"
 SH
-chmod 600 "$HOME/roamdeck/env.sh"
-source "$HOME/roamdeck/env.sh"
+chmod 600 "$HOME/relquay/env.sh"
+source "$HOME/relquay/env.sh"
 mkdir -p "$STUDIO_BASE"/{project,inputs,outputs,logs,studio} "$STUDIO_STATE"
 chmod 700 "$STUDIO_STATE"
 cat > "$STUDIO_BASE/studio/terminal.rc" <<'SH'
 if [ -f "$HOME/.bashrc" ]; then source "$HOME/.bashrc"; fi
-source "$HOME/roamdeck/env.sh"
+source "$HOME/relquay/env.sh"
 SH
 ```
 
-网关不会自动读取 `.env`，每次启动都要加载此环境。修改 `ROAMDECK_APP` 路径时，同步后续命令和服务配置。
+网关不会自动读取 `.env`，每次启动都要加载此环境。修改 `RELQUAY_APP` 路径时，同步后续命令和服务配置。
 
 #### 4. 启动 CloudCLI，建立工作台账号，再启动网关
 
 在第一个 SSH 终端启动 CloudCLI，保持它运行：
 
 ```bash
-source "$HOME/roamdeck/env.sh"
-cd "$ROAMDECK_APP"
+source "$HOME/relquay/env.sh"
+cd "$RELQUAY_APP"
 HOST=127.0.0.1 SERVER_PORT=3001 NODE_ENV=production cloudcli
 ```
 
 在第二个 SSH 终端执行：
 
 ```bash
-source "$HOME/roamdeck/env.sh"
-cd "$ROAMDECK_APP"
+source "$HOME/relquay/env.sh"
+cd "$RELQUAY_APP"
 node scripts/bootstrap-owner.mjs
 npm run server
 ```
 
-初始化脚本仅访问回环 CloudCLI，首次创建 `owner` 和随机密码，保存在权限 600 的 `$HOME/roamdeck/access.json`，不打印密码。由你在服务器私下查看该文件并用于登录；不要上传或分享。重复初始化会保留既有凭据。若注册时网络失败，文件也保留；先检查 CloudCLI 状态，确认账号是否已经建立，不要直接删掉凭据文件重来。已有 CloudCLI 账号但缺失凭据文件时不会自动重置账号。
+初始化脚本仅访问回环 CloudCLI，首次创建 `owner` 和随机密码，保存在权限 600 的 `$HOME/relquay/access.json`，不打印密码。由你在服务器私下查看该文件并用于登录；不要上传或分享。重复初始化会保留既有凭据。若注册时网络失败，文件也保留；先检查 CloudCLI 状态，确认账号是否已经建立，不要直接删掉凭据文件重来。已有 CloudCLI 账号但缺失凭据文件时不会自动重置账号。
 
 第三个终端检查：
 
@@ -196,7 +220,7 @@ curl -f http://127.0.0.1:3080/api/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/api/files
 ```
 
-应分别得到健康 JSON（0.4.5）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
+应分别得到健康 JSON（0.4.6）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
 
 #### 5. 配置 HTTPS 与后台常驻
 
@@ -285,12 +309,12 @@ shared/    协议、配置与显示逻辑
 android/   Capacitor Android 工程
 scripts/   构建、打包与验收
 upstream/  服务器客户端依赖锁文件
-docs/      安装、使用、配置和维护说明
+docs/      安装、使用、配置和维护说明（media/ 为首页演示成片）
 ```
 
 ## 致谢
 
-界面使用 React、Capacitor、xterm.js 和 Lucide；代理接入依托 CloudCLI 与原生 Codex App Server。手机交互设计参考 [HAPI](https://github.com/tiann/hapi) 和 [Paseo](https://github.com/getpaseo/paseo)。RoamDeck 的产品界面和适配层独立实现；依赖及上游工具保留各自的许可证与使用条款。
+界面使用 React、Capacitor、xterm.js 和 Lucide；代理接入依托 CloudCLI 与原生 Codex App Server。手机交互设计参考 [HAPI](https://github.com/tiann/hapi) 和 [Paseo](https://github.com/getpaseo/paseo)。Relquay 的产品界面和适配层独立实现；依赖及上游工具保留各自的许可证与使用条款。
 
 ## 许可证
 
@@ -299,10 +323,17 @@ docs/      安装、使用、配置和维护说明
 ## 更新记录
 
 <details>
-<summary>展开版本历史（当前 0.4.5）</summary>
+<summary>展开版本历史（当前 0.4.6）</summary>
 
 
-按版本倒序记录已交付变化。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.5。
+按版本倒序记录源码变化；部署状态见验证文档。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.6。
+
+### 0.4.6 · 2026-10-28
+
+- 产品更名为 **Relquay · 云渡**，更新应用、网页与通知显示名称。
+- 新安装包使用 `relquay` 前缀；保留 Android 包名、签名和已有凭据、服务器配置与提醒设置。
+- Android versionCode 13；GitHub 仓库更名为 `leechyi325/Relquay`，安装、贡献与反馈入口同步更新。
+- README 增加无署名介绍视频与紧凑预览；演示成片集中在 `docs/media/`，动画源码、原始素材及历史渲染保留在独立制作目录。
 
 ### 0.4.5 · 2026-10-27
 

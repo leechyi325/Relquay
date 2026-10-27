@@ -1,10 +1,10 @@
 # 架构与合同
 
-适用版本：**0.4.5**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
+适用版本：**0.4.6**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
 
 ## 范围与数据流
 
-RoamDeck 是单一所有者的远程工作台。登录者有权操作服务器文件、执行命令、授权代理；服务不是多租户隔离边界。客户端是独立 React 界面，通过 Capacitor 打包 Android，不是 CloudCLI 网页的 iframe。
+Relquay 是单一所有者的远程工作台。登录者有权操作服务器文件、执行命令、授权代理；服务不是多租户隔离边界。客户端是独立 React 界面，通过 Capacitor 打包 Android，不是 CloudCLI 网页的 iframe。
 
 ```text
 Android 内置 React UI / 浏览器

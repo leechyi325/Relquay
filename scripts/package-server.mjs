@@ -18,7 +18,7 @@ for (const file of ['AGENTS.md', 'CHANGELOG.md']) files.delete(file);
 await mkdir('.runtime', { recursive: true });
 await mkdir('artifacts', { recursive: true });
 const stage = await mkdtemp(path.join(app, '.runtime/server-package-'));
-const name = `roamdeck-server-${version}`, bundle = path.join(stage, name);
+const name = `relquay-server-${version}`, bundle = path.join(stage, name);
 try {
   for (const file of files) {
     if (path.isAbsolute(file) || file.split('/').includes('..')) throw new Error('Invalid source path');

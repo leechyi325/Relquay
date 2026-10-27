@@ -12,7 +12,7 @@ npm run android:sync
 (cd android && "${STUDIO_GRADLE:-./gradlew}" --no-daemon assembleDebug)
 mkdir -p artifacts
 version="$(node -p 'require("./package.json").version')"
-artifact="artifacts/roamdeck-$version-debug.apk"
+artifact="artifacts/relquay-$version-debug.apk"
 cp android/app/build/outputs/apk/debug/app-debug.apk "$artifact"
 "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$artifact"
 shasum -a 256 "$artifact"

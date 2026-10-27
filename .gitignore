@@ -35,6 +35,8 @@ android/capacitor-cordova-android-plugins/
 /content/
 /toolchains/
 *.mp4
+# Only the reviewed product introduction is versioned as README documentation.
+!/docs/media/relquay-intro.mp4
 *.mov
 *.webm
 *.wav

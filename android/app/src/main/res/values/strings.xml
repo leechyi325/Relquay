@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">RoamDeck</string>
-    <string name="title_activity_main">RoamDeck</string>
+    <string name="app_name">云渡</string>
+    <string name="title_activity_main">云渡</string>
     <string name="package_name">xyz.leechyi.compileverse</string>
     <string name="custom_url_scheme">xyz.leechyi.compileverse</string>
 </resources>

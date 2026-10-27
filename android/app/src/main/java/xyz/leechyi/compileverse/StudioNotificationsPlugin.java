@@ -99,7 +99,7 @@ public class StudioNotificationsPlugin extends Plugin {
             NotificationManager manager = (NotificationManager)getContext().getSystemService(Context.NOTIFICATION_SERVICE); StudioNotificationService.createChannels(manager);
             if (!allowed(getContext()) || manager.getNotificationChannel(StudioNotificationService.ALERTS).getImportance() == NotificationManager.IMPORTANCE_NONE) { call.reject("任务与批准提醒频道已关闭，请在系统设置中开启"); return; }
             PendingIntent open = PendingIntent.getActivity(getContext(), 7, new Intent(getContext(), MainActivity.class).setAction(Intent.ACTION_MAIN), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            manager.notify("roamdeck.test", 7, new NotificationCompat.Builder(getContext(), StudioNotificationService.ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle("RoamDeck 测试提醒").setContentText("提醒频道可用；任务和批准使用同一频道").setContentIntent(open).setAutoCancel(true).setVisibility(android.app.Notification.VISIBILITY_PRIVATE).build()); call.resolve();
+            manager.notify("roamdeck.test", 7, new NotificationCompat.Builder(getContext(), StudioNotificationService.ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle(getContext().getString(R.string.app_name) + " 测试提醒").setContentText("提醒频道可用；任务和批准使用同一频道").setContentIntent(open).setAutoCancel(true).setVisibility(android.app.Notification.VISIBILITY_PRIVATE).build()); call.resolve();
         } catch (Exception e) { call.reject("无法发送测试提醒，请检查系统通知设置"); }
     }
 }

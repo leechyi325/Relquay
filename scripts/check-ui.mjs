@@ -67,7 +67,7 @@ try {
   assert.equal(await page.getByLabel('API 密钥', { exact: true }).getAttribute('type'), 'password');
   await shot('agent-config-guided-codex');
   await page.getByRole('button', { name: '源码编辑', exact: true }).click();
-  assert.match(await page.getByLabel('代理配置内容').inputValue(), /roamdeck_custom/);
+  assert.match(await page.getByLabel('代理配置内容').inputValue(), /relquay_custom/);
   assert.match(await page.getByLabel('代理配置内容').inputValue(), /experimental_bearer_token/);
   await page.getByLabel('代理配置内容', { exact: true }).fill('model = "fixture-only"');
   await shot('agent-config-codex');

@@ -47,7 +47,7 @@ public class StudioNotificationService extends Service {
     private Notification ongoing() {
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class).setAction(Intent.ACTION_MAIN), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         PendingIntent pause = PendingIntent.getService(this, 1, new Intent(this, StudioNotificationService.class).setAction(STOP), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new NotificationCompat.Builder(this, MONITOR).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle("RoamDeck 提醒监听已开启").setContentText("约每 15 秒检查已选服务器 · 可随时暂停").setContentIntent(open).setOngoing(true).setSilent(true).setCategory(NotificationCompat.CATEGORY_SERVICE).addAction(0, "暂停监听", pause).build();
+        return new NotificationCompat.Builder(this, MONITOR).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle(getString(R.string.app_name) + " 提醒监听已开启").setContentText("约每 15 秒检查已选服务器 · 可随时暂停").setContentIntent(open).setOngoing(true).setSilent(true).setCategory(NotificationCompat.CATEGORY_SERVICE).addAction(0, "暂停监听", pause).build();
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && STOP.equals(intent.getAction())) { prefs().edit().putBoolean("enabled", false).commit(); stopSelf(); return START_NOT_STICKY; }
@@ -111,7 +111,7 @@ public class StudioNotificationService extends Service {
         Intent intent = new Intent(this, MainActivity.class).setAction(StudioNotificationsPlugin.OPEN).setData(android.net.Uri.parse("roamdeck://notice/" + id + "/" + Integer.toUnsignedString(origin.hashCode()))).putExtra("origin", origin).putExtra("eventId", id).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent open = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Bundle extras = new Bundle(); extras.putString("roamdeck.origin", origin); extras.putString("roamdeck.eventId", id); extras.putString("roamdeck.type", type);
-        Notification publicView = new NotificationCompat.Builder(this, ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle("RoamDeck 有新提醒").build();
+        Notification publicView = new NotificationCompat.Builder(this, ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle(getString(R.string.app_name) + " 有新提醒").build();
         Notification notification = new NotificationCompat.Builder(this, ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle(title).setContentText(server + " · 点击打开工作台").setContentIntent(open).setAutoCancel(true).setOnlyAlertOnce(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(publicView).setCategory(type.equals("approval") || type.equals("question") ? NotificationCompat.CATEGORY_MESSAGE : NotificationCompat.CATEGORY_STATUS).addExtras(extras).build();
         if (!stopped && selected(origin) && StudioNotificationsPlugin.allowed(this)) { manager().notify(origin + ":" + id, 1, notification); prefs().edit().putLong("lastAlert:" + origin, System.currentTimeMillis()).apply(); }
     }

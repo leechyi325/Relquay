@@ -1,6 +1,6 @@
-# 参与 RoamDeck
+# 参与 Relquay
 
-感谢你帮助改进 RoamDeck。可以从文档、可复现的问题、手机交互和环境兼容性开始，不需要先搭建 Android 模拟器。
+感谢你帮助改进 Relquay。可以从文档、可复现的问题、手机交互和环境兼容性开始，不需要先搭建 Android 模拟器。
 
 [返回首页](README.md) · [安装指南](docs/getting-started.md) · [架构](docs/architecture.md) · [安全反馈](SECURITY.md)
 
@@ -16,8 +16,8 @@
 需要 Node.js ≥24 和 npm；终端功能还需要 tmux。先 fork 仓库，在自己的分支开发：
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/RoamDeck.git
-cd RoamDeck
+git clone https://github.com/YOUR_USERNAME/Relquay.git
+cd Relquay
 git switch -c feat/your-change
 npm ci
 ```

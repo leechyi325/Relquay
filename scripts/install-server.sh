@@ -44,7 +44,7 @@ chmod 700 "$studio/run-cloudcli.sh" "$studio/run-studio.sh"
 for service in cloudcli studio; do
   sudo tee "/etc/systemd/system/compileverse-$service.service" > /dev/null <<UNIT
 [Unit]
-Description=RoamDeck $service
+Description=Relquay $service
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -112,7 +112,7 @@ auth:
 YAML
 sudo tee /etc/systemd/system/compileverse-filebrowser.service > /dev/null <<UNIT
 [Unit]
-Description=RoamDeck FileBrowser Quantum
+Description=Relquay FileBrowser Quantum
 After=network.target
 [Service]
 User=ubuntu

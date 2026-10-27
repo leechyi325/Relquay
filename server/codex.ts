@@ -9,7 +9,7 @@ import { decodeEvent, type ChatEvent, type AgentModel, type Conversation } from 
 import { nativeImage, withFileReferences, type ResolvedAttachment } from './attachments.ts';
 import { validateModel } from './models.ts';
 import { HttpError } from './files.ts';
-import { appVersion } from '../shared/config.ts';
+import { appVersion, productName } from '../shared/config.ts';
 import { codexAccount, unavailableUsage, type AccountUsage } from '../shared/usage.ts';
 
 type Session = { id: string; cwd: string; title?: string; projectDisplayName?: string; threadId?: string; turnId?: string; seq: number; processing: boolean; events: ChatEvent[] };
@@ -105,7 +105,7 @@ export class CodexBridge {
       const diagnostics = fs.createWriteStream(path.join(this.directory, 'app-server.log'), { flags: 'a', mode: 0o600 }); child.stderr.pipe(diagnostics);
       child.on('error', e => this.fail(e));
       child.on('close', () => { diagnostics.end(); lines.close(); if (this.child === child) { this.child = undefined; this.loaded.clear(); this.fail(new Error('Codex 服务已停止，当前轮次中断')); } });
-      await this.request('initialize', { clientInfo: { name: 'roamdeck', title: 'RoamDeck', version: appVersion } });
+      await this.request('initialize', { clientInfo: { name: 'roamdeck', title: productName, version: appVersion } });
       this.write({ method: 'initialized', params: {} });
     })();
     try { await this.starting; } finally { this.starting = undefined; }

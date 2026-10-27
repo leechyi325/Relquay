@@ -1,6 +1,6 @@
 # 代理配置与扩展
 
-适用版本：**0.4.5**。[返回首页](../README.md) · [使用指南](user-guide.md) · [部署维护](deployment.md)
+适用版本：**0.4.6**。[返回首页](../README.md) · [使用指南](user-guide.md) · [部署维护](deployment.md)
 
 从 Claude Code / Codex 卡片旁的小设置按钮进入「配置 / Skills / MCP / 插件」。这些操作作用于当前服务器运行用户，对同一用户下的项目通用；当前没有项目级覆盖关系管理。
 
@@ -70,4 +70,4 @@ Claude 用户级停用通过工作台私有 `state/claude-mcp-disabled.json` 暂
 
 ## 设计参考
 
-引导字段组织参考 [CC-Switch 配置编辑说明](https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/2-providers/2.3-edit.md)，实际键名按当前锁定的 [Codex 0.164.0 schema](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/core/config.schema.json) 与 [Claude 环境变量说明](https://code.claude.com/docs/en/env-vars) 适配。RoamDeck 自行实现表单与保存逻辑；上游字段变化需重新验证。
+引导字段组织参考 [CC-Switch 配置编辑说明](https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/2-providers/2.3-edit.md)，实际键名按当前锁定的 [Codex 0.164.0 schema](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/core/config.schema.json) 与 [Claude 环境变量说明](https://code.claude.com/docs/en/env-vars) 适配。Relquay 自行实现表单与保存逻辑；上游字段变化需重新验证。

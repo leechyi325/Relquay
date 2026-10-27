@@ -23,6 +23,16 @@ test('guided fields preserve unrelated Codex configuration and support inline/en
   assert.equal(official.model_provider, 'openai'); assert.deepEqual(official.model_providers, parsed.model_providers);
 });
 
+test('brand rename preserves existing Codex provider identity and credentials', () => {
+  const source = 'model_provider="roamdeck_custom"\nmodel="legacy-model"\n[model_providers.roamdeck_custom]\nbase_url="https://api.example.com/v1"\nexperimental_bearer_token="fixture-key"\n';
+  const fields = readConfigFields('codex', source);
+  assert.equal(fields.providerId, 'roamdeck_custom');
+  assert.equal(applyConfigFields('codex', source, fields), source);
+  const output = parse(applyConfigFields('codex', source, { ...fields, model: 'updated-model' }));
+  assert.equal(output.model_provider, 'roamdeck_custom');
+  assert.deepEqual(output.model_providers, parse(source).model_providers);
+});
+
 test('guided Claude fields synchronize model/effort overrides and preserve permissions/hooks/plugins', () => {
   const original = { model: 'old', env: { ANTHROPIC_MODEL: 'override', CLAUDE_CODE_EFFORT_LEVEL: 'low', ANTHROPIC_AUTH_TOKEN: 'old-token', OTHER: 'keep' }, permissions: { deny: ['Read(.env)'] }, hooks: { Stop: [] }, enabledPlugins: { 'a@b': true } };
   const source = JSON.stringify(original), fields = readConfigFields('claude', source);
@@ -38,7 +48,7 @@ test('guided Claude fields synchronize model/effort overrides and preserve permi
 test('guided validation rejects unsafe/invalid fields and leaves advanced auth and syntax to source editing', () => {
   const base = { ...readConfigFields('codex', ''), connection: 'custom' as const, baseUrl: 'https://api.example.com/v1', model: 'test', secret: 'secret-must-not-leak' };
   for (const patch of [{ baseUrl: 'javascript:alert(1)' }, { baseUrl: 'https://secret@host.example/v1' }, { providerId: 'openai' }, { providerId: '../bad' }, { secret: '' }, { secret: 'bad\nkey' }, { credential: 'env' as const, envKey: 'X;echo' }, { model: '' }]) assert.throws(() => applyConfigFields('codex', '', { ...base, ...patch }), error => error instanceof Error && !error.message.includes(base.secret));
-  const source = '[model_providers.roamdeck_custom.auth]\ncommand="helper"\n';
+  const source = '[model_providers.relquay_custom.auth]\ncommand="helper"\n';
   assert.throws(() => applyConfigFields('codex', source, base), /高级鉴权/);
   assert.throws(() => readConfigFields('codex', 'model=['), /格式/);
   assert.throws(() => readConfigFields('claude', '[]'), /格式/);

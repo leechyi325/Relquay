@@ -1,6 +1,6 @@
 # 使用指南与故障排查
 
-适用版本：**0.4.5**。[返回首页](../README.md) · [配置与扩展](configuration.md) · [部署维护](deployment.md)
+适用版本：**0.4.6**。[返回首页](../README.md) · [配置与扩展](configuration.md) · [部署维护](deployment.md)
 
 ## 连接服务器
 

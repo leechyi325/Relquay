@@ -39,7 +39,7 @@ CADDY
 "$studio/bin/caddy" validate --config "$studio/Caddyfile"
 sudo tee /etc/systemd/system/compileverse-https.service > /dev/null <<UNIT
 [Unit]
-Description=RoamDeck HTTPS
+Description=Relquay HTTPS
 After=network-online.target compileverse-studio.service
 Wants=network-online.target
 [Service]

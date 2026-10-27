@@ -1,10 +1,10 @@
 # 安全反馈
 
-RoamDeck 能操作服务器文件、终端和代理，安全问题可能涉及工作台账号、凭据或项目内容。敏感漏洞请勿直接公开完整复现细节。
+Relquay 能操作服务器文件、终端和代理，安全问题可能涉及工作台账号、凭据或项目内容。敏感漏洞请勿直接公开完整复现细节。
 
 ## 报告渠道
 
-先查看仓库 [Security 页面](https://github.com/leechyi325/RoamDeck/security)。如果页面提供 **Report a vulnerability**，请使用该私密入口。
+先查看仓库 [Security 页面](https://github.com/leechyi325/Relquay/security)。如果页面提供 **Report a vulnerability**，请使用该私密入口。
 
 如果该入口尚未启用，请在普通 Issue 中仅请求建立私密联系渠道，不附漏洞利用步骤、凭据或私有数据；等维护者确认私密渠道后再发送细节。当前没有在仓库中公布专用安全邮箱，也不承诺固定响应时限。
 

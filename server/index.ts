@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createStudio } from './app.ts';
-import { defaultOrigin } from '../shared/config.ts';
+import { defaultOrigin, productName } from '../shared/config.ts';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const studio = createStudio({
   base: process.env.STUDIO_BASE ?? process.env.COMPILEVERSE_ROOT ?? '/home/ubuntu/compileverse',
@@ -12,5 +12,5 @@ const studio = createStudio({
   allowedDirectories: process.env.STUDIO_BROWSE_ROOTS?.split(path.delimiter).filter(Boolean),
   clientOrigins: process.env.STUDIO_CLIENT_ORIGINS?.split(',').map(value => new URL(value.trim()).origin),
 });
-studio.server.listen(Number(process.env.STUDIO_PORT ?? 3080), process.env.STUDIO_HOST ?? '127.0.0.1', () => console.log('RoamDeck ready'));
+studio.server.listen(Number(process.env.STUDIO_PORT ?? 3080), process.env.STUDIO_HOST ?? '127.0.0.1', () => console.log(`${productName} ready`));
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { studio.close(); setTimeout(() => process.exit(0), 4000).unref(); });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { codexTokens, claudeTokens } from '../shared/usage.ts';
 const f = await fixture(Number(process.env.STUDIO_FIXTURE_PORT ?? 3090));
 await fs.mkdir(path.join(f.temp, 'project/示例工程'));
-await fs.writeFile(path.join(f.temp, 'project/README.md'), '# RoamDeck\n\nAI、终端与文件，随时掌握。\n\n这是 UI 测试中的临时文件。');
+await fs.writeFile(path.join(f.temp, 'project/README.md'), '# Relquay\n\nAI、终端与文件，随时掌握。\n\n这是 UI 测试中的临时文件。');
 await fs.writeFile(path.join(f.temp, 'project/example.js'), '// UI test fixture\nconst frame = 0;');
 if (process.env.STUDIO_FIXTURE_PORT === '3091') await fs.writeFile(path.join(f.temp, 'project/第二台服务器.txt'), 'Server Two');
 await f.studio.jobs.add('验证后台任务', 'echo "Workspace environment check complete"', { root: 'project', path: '' });

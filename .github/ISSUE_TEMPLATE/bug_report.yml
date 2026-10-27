@@ -8,8 +8,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: RoamDeck 版本
-      placeholder: 例如 0.4.5；请分别注明 App 与服务器版本
+      label: Relquay 版本
+      placeholder: 例如 0.4.6；请分别注明 App 与服务器版本
     validations:
       required: true
   - type: dropdown
