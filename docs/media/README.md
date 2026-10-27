@@ -14,7 +14,7 @@
 
 画面中的应用截图来自 0.4.6 的真实 React 界面，使用虚构的个人作品集项目、对话和文件。动画表现操作流程，未使用生产账号、私密数据或真实模型执行来演示性能。Android 提醒以前台监听服务已开启、系统权限允许为前提。
 
-首页使用 GitHub 原生[视频附件](https://github.com/user-attachments/assets/a9ee4023-a6ac-42a3-af42-4f8e4a35a56e)，作为内嵌播放器；仓库内的 MP4 是同一文件，便于下载与离线查看。GIF 收入折叠区，作为其他 Markdown 查看器的预览。若附件无法加载，可使用首页的「播放 / 下载完整 MP4」入口。
+首页使用 GitHub 原生[视频附件](https://github.com/user-attachments/assets/f049a6e0-826f-4ae6-9f05-81e6abdf6efc)，作为内嵌播放器；仓库内的 MP4 是同一文件，便于下载与离线查看。GIF 收入折叠区，作为其他 Markdown 查看器的预览。若附件无法加载，可使用首页的「播放 / 下载完整 MP4」入口。
 
 ## 来源与维护
 
