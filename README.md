@@ -29,7 +29,7 @@
 
 工作在远端，掌握在手边。32 秒了解从手机发起任务、审阅批准，到预览结果和接收完成提醒的过程。
 
-https://github.com/user-attachments/assets/a9ee4023-a6ac-42a3-af42-4f8e4a35a56e
+https://github.com/user-attachments/assets/f049a6e0-826f-4ae6-9f05-81e6abdf6efc
 
 [播放 / 下载完整 MP4](docs/media/relquay-intro.mp4) · [演示素材说明](docs/media/README.md)
 
