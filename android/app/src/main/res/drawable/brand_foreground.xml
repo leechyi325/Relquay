@@ -1,6 +1,9 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="64" android:viewportHeight="64">
-  <path android:pathData="M18,10 H45 A7,7 0,0 1,52 17 V42" android:fillColor="@android:color/transparent" android:strokeColor="#A4ADA6" android:strokeWidth="2.5" android:strokeLineCap="round"/>
-  <path android:pathData="M17,16 H41 A7,7 0,0 1,48 23 V45 A7,7 0,0 1,41 52 H17 A7,7 0,0 1,10 45 V23 A7,7 0,0 1,17 16 Z" android:fillColor="#F7F2E8" android:strokeColor="#293D50" android:strokeWidth="3"/>
-  <path android:pathData="M20,28 L27,34 L20,40" android:fillColor="@android:color/transparent" android:strokeColor="#B45E3C" android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-  <path android:pathData="M33,40 H40" android:strokeColor="#293D50" android:strokeWidth="3.5" android:strokeLineCap="round"/>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <!-- Include every stroke in the central 66dp safe circle used by adaptive masks. -->
+  <group android:translateX="23.125" android:translateY="22.875">
+    <path android:pathData="M18,10 H45 A7,7 0,0 1,52 17 V42" android:fillColor="@android:color/transparent" android:strokeColor="#A4ADA6" android:strokeWidth="2.5" android:strokeLineCap="round"/>
+    <path android:pathData="M17,16 H41 A7,7 0,0 1,48 23 V45 A7,7 0,0 1,41 52 H17 A7,7 0,0 1,10 45 V23 A7,7 0,0 1,17 16 Z" android:fillColor="#F7F2E8" android:strokeColor="#293D50" android:strokeWidth="3"/>
+    <path android:pathData="M20,28 L27,34 L20,40" android:fillColor="@android:color/transparent" android:strokeColor="#B45E3C" android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    <path android:pathData="M33,40 H40" android:strokeColor="#293D50" android:strokeWidth="3.5" android:strokeLineCap="round"/>
+  </group>
 </vector>
