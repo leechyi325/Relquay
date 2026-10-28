@@ -173,10 +173,10 @@ export class CodexBridge {
     const s = this.sessions.get(id);
     if (s?.processing && s.threadId && s.turnId) await this.request('turn/interrupt', { threadId: s.threadId, turnId: s.turnId });
   }
-  approve(requestId: string, allow: boolean, answers?: Record<string, { answers: string[] }>) {
+  approve(requestId: string, allow: boolean, answers?: Record<string, { answers: string[] }>, remember = false) {
     const approval = this.approvals.get(requestId); if (!approval) return false;
     if (approval.questions && allow && !answers) throw new HttpError(400, '请填写问题后提交');
-    this.write({ id: approval.rpcId, result: approval.questions ? { answers: allow ? answers : {} } : { decision: allow ? 'accept' : 'decline' } });
+    this.write({ id: approval.rpcId, result: approval.questions ? { answers: allow ? answers : {} } : { decision: allow ? remember ? 'acceptForSession' : 'accept' : 'decline' } });
     this.approvals.delete(requestId); const session = this.sessions.get(approval.sessionId)!;
     this.emit(session, { kind: 'permission_resolved', requestId }); return true;
   }

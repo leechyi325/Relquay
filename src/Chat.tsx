@@ -48,7 +48,7 @@ export function Chat({ conversation, back, reference, clearReference, toast, man
     <div className="chat-scroll" ref={scroll} onScroll={() => { if (scroll.current) pinned.current = scroll.current.scrollHeight - scroll.current.scrollTop - scroll.current.clientHeight < 100; }}>
       {chat.hasMore && <button className="history-more" disabled={chat.loadingHistory} onClick={() => { pinned.current = false; const node = scroll.current, height = node?.scrollHeight ?? 0, top = node?.scrollTop ?? 0; void chat.loadEarlier().then(() => requestAnimationFrame(() => { if (node) node.scrollTop = top + node.scrollHeight - height; })); }}>{chat.loadingHistory ? '正在读取…' : '加载更早的消息'}</button>}
       {!messages.length && <div className="chat-welcome"><div className={'welcome-symbol ' + conversation.provider}>{conversation.provider === 'claude' ? '✳' : '⌘'}</div><span className="eyebrow">LET'S GET TO WORK</span><h2>这次，想完成什么？</h2><p>描述目标，或添加手机和服务器上的文件。</p><div className="prompt-chips">{['检查项目，说明当前结构与状态', '帮我规划并实现一个新功能', '检查代码，提出修复与改进建议'].map(prompt => <button key={prompt} onClick={() => setDraft(prompt)}>{prompt}<ArrowUpRight size={15}/></button>)}</div></div>}
-      {messages.map((message, index) => <Message key={message.id ?? index} message={message}/>)}
+      {groupTools(messages).map((entry, index) => Array.isArray(entry) ? <ToolGroup key={entry[0].id ?? 'g' + index} events={entry}/> : <Message key={entry.id ?? index} message={entry}/>)}
       {chat.processing && !chat.permissions.length && <div className="working-state"><span className="thinking-dots"><i/><i/><i/></span><span>正在处理，离开页面后任务继续。</span></div>}
       {chat.error && <div className="error-banner">{chat.error}</div>}<div ref={bottom}/>
     </div>
@@ -61,6 +61,30 @@ export function Chat({ conversation, back, reference, clearReference, toast, man
     {configuration && <Sheet title="模型与思考程度" close={() => setConfiguration(false)}><p className="inline-note">选项来自当前服务器。变更从下一条消息生效，运行中请先等待或停止。</p>{modelError && <div className="error-banner">{modelError}<button onClick={() => void loadModels()}>重新读取</button></div>}<fieldset className="model-choices" disabled={chat.processing}><legend>选择模型</legend><div role="group" aria-label="选择模型">{[{ id: '', name: '服务器默认模型', description: '沿用当前服务器的默认设置' }, ...models].map(item => <button type="button" key={item.id} aria-pressed={model === item.id} className={model === item.id ? 'selected' : ''} onClick={() => { setModel(item.id); setEffort(''); }}><span><strong>{item.name}</strong><small>{item.description || item.id}</small></span><span className="answer-indicator">{model === item.id && <Check size={14}/>}</span></button>)}</div></fieldset>{selected?.description && <p className="model-description">{selected.description}</p>}{selected?.efforts.length ? <fieldset className="effort-choices" disabled={chat.processing}><legend>思考程度</legend><div><button type="button" aria-pressed={!effort} className={!effort ? 'selected' : ''} onClick={() => setEffort('')}>默认{selected.defaultEffort ? ` · ${effortNames[selected.defaultEffort] ?? selected.defaultEffort}` : ''}</button>{selected.efforts.map(value => <button type="button" key={value} aria-pressed={effort === value} className={effort === value ? 'selected' : ''} onClick={() => setEffort(value)}>{effortNames[value] ?? value}</button>)}</div></fieldset> : <p className="muted">此模型未提供可调的思考程度。</p>}<button className="primary full" onClick={() => { localStorage.setItem(key, JSON.stringify({ model, effort })); setConfiguration(false); }}><Check size={17}/>完成设置</button><p className="inline-note">目录展示不代表账号已获模型使用权限，实际调用结果以服务器返回为准。</p></Sheet>}
     {details && <Sheet title="会话信息" close={() => setDetails(false)}><dl className="session-info"><dt>代理</dt><dd>{names[conversation.provider]}</dd><dt>会话</dt><dd>{conversation.sessionId}</dd><dt>服务器</dt><dd>{origin}</dd><dt>模型</dt><dd>{model ? selected?.name ?? model : '服务器默认'}</dd><dt>思考程度</dt><dd>{effortNames[effort] ?? (effort || '模型默认')}</dd><dt>工作区</dt><dd>{projectPath || '读取目录…'}</dd></dl><div className="action-list"><button onClick={() => { setDetails(false); manage(); }}>重命名 / 管理会话<ChevronRight size={16}/></button></div></Sheet>}
   </div>;
+}
+const isTool = (event: ChatEvent) => event.kind === 'tool_use' || event.kind === 'tool_result';
+/** 连续的工具调用/结果合并成一组，避免长任务刷屏。 */
+function groupTools(messages: ChatEvent[]): (ChatEvent | ChatEvent[])[] {
+  const out: (ChatEvent | ChatEvent[])[] = [];
+  for (const message of messages) {
+    if (!isTool(message)) { out.push(message); continue; }
+    const last = out.at(-1);
+    if (Array.isArray(last)) last.push(message); else out.push([message]);
+  }
+  return out;
+}
+function toolSummary(event: ChatEvent) {
+  const input = event.toolInput && typeof event.toolInput === 'object' ? event.toolInput as Record<string, unknown> : {};
+  const text = [input.command, input.file_path, input.path, input.pattern, input.url, input.description].find(value => typeof value === 'string') as string | undefined;
+  return (text ?? event.content ?? event.text ?? '').split('\n')[0].slice(0, 80);
+}
+function ToolGroup({ events }: { events: ChatEvent[] }) {
+  const calls = events.filter(event => event.kind === 'tool_use');
+  if (events.length === 1) return <Message message={events[0]}/>;
+  const names = [...new Set(calls.map(event => event.toolName ?? '工具'))].slice(0, 3).join('、');
+  return <details className="tool-event tool-group"><summary><span><SquareTerminal size={15}/></span>{calls.length || events.length} 次工具调用{names && ` · ${names}`}<ChevronDown size={14}/></summary><div className="tool-group-list">{events.map((event, index) => event.kind === 'tool_use'
+    ? <details key={event.id ?? index} className="tool-row"><summary><strong>{event.toolName ?? '工具调用'}</strong><span>{toolSummary(event)}</span></summary><pre>{JSON.stringify(event.toolInput ?? event, null, 2)}</pre></details>
+    : <details key={event.id ?? index} className="tool-row result"><summary><strong>结果</strong><span>{toolSummary(event)}</span></summary><pre>{event.content ?? event.text ?? JSON.stringify(event.toolResult ?? event, null, 2)}</pre></details>)}</div></details>;
 }
 function Message({ message }: { message: ChatEvent }) {
   if (['text', 'stream_delta'].includes(message.kind)) return <article className={'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message')}><span className="message-author">{message.role === 'user' ? '你' : 'AI 助手'}</span><ChatMarkdown content={message.content ?? message.text ?? ''}/>{Array.isArray(message.attachments) && <div className="message-attachments">{message.attachments.map((file, i) => <span key={i}><File size={13}/>{String(file.name ?? '附件')}</span>)}</div>}</article>;

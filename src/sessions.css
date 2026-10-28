@@ -21,3 +21,5 @@
 .art-brand{width:75%;max-width:110px;aspect-ratio:1;align-self:center}
 
 .app-shell.has-chat{--nav-height:0px}.has-chat .chat-page{padding-bottom:env(safe-area-inset-bottom)}.has-chat .chat-heading{gap:6px}.has-chat .chat-heading>div{min-width:0;flex:1}.has-chat .chat-heading>button{flex-shrink:0}
+
+.project-group{margin-bottom:8px}.project-header{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:0;border-radius:11px;background:#f1efe4;color:#293d50;font:inherit;text-align:left;cursor:pointer}.project-header small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.project-group .conversation-row{margin-left:10px}

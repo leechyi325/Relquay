@@ -36,7 +36,12 @@ export function setOrigin(value: string) {
 export async function forgetServer(key: string) { if (isNative) await secure.clear({ key }); sessionStorage.removeItem('studio.token:' + key); }
 export async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(origin + url, { ...options, credentials: 'include', headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options.headers }, signal: options.signal ?? AbortSignal.timeout(30000) });
-  if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error ?? `请求失败 (${res.status})`); }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    // 凭据在服务器端失效（如数据被清理）时回到登录页，而不是停留在一个所有请求都失败的界面。
+    if (res.status === 401 && bearer && url !== '/api/login') { const server = origin; bearer = ''; void saveToken('', server); window.dispatchEvent(new CustomEvent('studio:unauthorized', { detail: server })); }
+    throw new Error(data.error ?? `请求失败 (${res.status})`);
+  }
   return res.json() as Promise<T>;
 }
 export const post = <T>(url: string, value: unknown) => api<T>(url, { method: 'POST', body: JSON.stringify(value) });

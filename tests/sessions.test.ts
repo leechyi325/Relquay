@@ -40,3 +40,14 @@ test('existing directory naming and invalid project locations are enforced', asy
   await fs.symlink(path.join(f.temp, 'state'), path.join(f.temp, 'project/escape'));
   assert.equal((await f.call('/api/conversations', { method: 'POST', body: JSON.stringify({ ...input, cwd: { root: 'project', path: 'escape' } }) })).status, 403);
 });
+
+test('a session that never received a message stays out of the recent list until used', async t => {
+  const f = await fixture(); t.after(f.close);
+  const input = { provider: 'claude', projectName: '空会话', title: '尚未发送', cwd: { root: 'project', path: '' }, createDirectory: true };
+  const create = await f.call('/api/conversations', { method: 'POST', headers: { 'X-Keep-Draft': '1' }, body: JSON.stringify(input) });
+  assert.equal(create.status, 201); const { sessionId } = await create.json();
+  const list = async () => (await (await f.call('/api/cloud/providers/sessions/recent')).json()).data.conversations as { sessionId: string }[];
+  assert.equal((await list()).some(item => item.sessionId === sessionId), false);
+  f.studio.markUsed(sessionId);
+  assert.equal((await list()).some(item => item.sessionId === sessionId), true);
+});

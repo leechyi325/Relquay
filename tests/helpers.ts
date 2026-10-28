@@ -98,7 +98,15 @@ export async function fixture(port = 0) {
   const studioPort = (studio.server.address() as { port: number }).port, base = `http://127.0.0.1:${studioPort}`;
   const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'test-owner', password: 'fixture-password' }) });
   const { token } = await login.json() as { token: string };
-  const call = (url: string, options?: RequestInit) => fetch(base + url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options?.headers } });
+  // 多数用例把新建会话当作“已有内容”；X-Keep-Draft 头让专门的用例保留草稿状态。
+  const call = async (url: string, options?: RequestInit) => {
+    const response = await rawCall(url, options);
+    if (url === '/api/conversations' && options?.method === 'POST' && response.status === 201 && !(options.headers as Record<string, string> | undefined)?.['X-Keep-Draft']) {
+      const { sessionId } = await response.clone().json(); studio.markUsed(sessionId);
+    }
+    return response;
+  };
+  const rawCall = (url: string, options?: RequestInit) => fetch(base + url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options?.headers } });
   const close = async () => { studio.close(); wss.clients.forEach(c => c.terminate()); wss.close(); upstream.close(); await fs.rm(temp, { recursive: true, force: true }); };
   return { temp, base, token, call, close, studio, projects, catalog, running, sentMessages, publish, publishTerminal, extensions };
 }

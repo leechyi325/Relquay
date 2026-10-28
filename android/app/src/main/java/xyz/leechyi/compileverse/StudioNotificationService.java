@@ -29,7 +29,7 @@ public class StudioNotificationService extends Service {
     static final String MONITOR = "roamdeck.monitor", ALERTS = "roamdeck.alerts";
     private static final String STOP = "roamdeck.pause";
     private static final int ONGOING = 711;
-    private ScheduledExecutorService worker; private volatile boolean stopped;
+    private ScheduledExecutorService worker; private volatile boolean stopped; private android.os.PowerManager.WakeLock wake;
     private SharedPreferences prefs() { return StudioNotificationsPlugin.storage(this); }
     private NotificationManager manager() { return (NotificationManager)getSystemService(NOTIFICATION_SERVICE); }
     static void createChannels(NotificationManager manager) {
@@ -41,6 +41,8 @@ public class StudioNotificationService extends Service {
         super.onCreate(); stopped = false;
         createChannels(manager());
         if (Build.VERSION.SDK_INT >= 34) startForeground(ONGOING, ongoing(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE); else startForeground(ONGOING, ongoing());
+        // 息屏进入 Doze 后 CPU 休眠会让轮询停摆，监听开启期间持有 CPU 唤醒锁（随服务停止释放）。
+        wake = ((android.os.PowerManager)getSystemService(POWER_SERVICE)).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "relquay:monitor"); wake.setReferenceCounted(false); wake.acquire();
         running = true;
         worker = Executors.newSingleThreadScheduledExecutor(); worker.scheduleWithFixedDelay(this::poll, 0, 15, TimeUnit.SECONDS);
     }
@@ -115,7 +117,7 @@ public class StudioNotificationService extends Service {
         Notification notification = new NotificationCompat.Builder(this, ALERTS).setSmallIcon(R.drawable.ic_stat_roamdeck).setContentTitle(title).setContentText(server + " · 点击打开工作台").setContentIntent(open).setAutoCancel(true).setOnlyAlertOnce(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(publicView).setCategory(type.equals("approval") || type.equals("question") ? NotificationCompat.CATEGORY_MESSAGE : NotificationCompat.CATEGORY_STATUS).addExtras(extras).build();
         if (!stopped && selected(origin) && StudioNotificationsPlugin.allowed(this)) { manager().notify(origin + ":" + id, 1, notification); prefs().edit().putLong("lastAlert:" + origin, System.currentTimeMillis()).apply(); }
     }
-    @Override public void onDestroy() { stopped = true; running = false; if (worker != null) worker.shutdownNow(); stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy(); }
+    @Override public void onDestroy() { stopped = true; running = false; if (worker != null) worker.shutdownNow(); if (wake != null && wake.isHeld()) wake.release(); stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy(); }
     @Override public IBinder onBind(Intent intent) { return null; }
     private static class LoginRequired extends Exception {}
 }

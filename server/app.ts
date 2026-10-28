@@ -45,6 +45,11 @@ export function createStudio(config: Config) {
   const attachments = new Attachments(path.join(config.state, 'attachments'), files, config.cloudAssets ?? path.join(os.homedir(), '.cloudcli/assets'));
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 'loopback');
   const server = createServer(app), wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+  // 刚创建、尚未发送过消息的会话在 CloudCLI/Codex 里没有原生记录，不在最近列表展示，避免出现服务器上找不到的空会话。
+  const draftsFile = path.join(config.state, 'draft-sessions.json');
+  const drafts = new Set<string>((() => { try { return z.array(z.string()).parse(JSON.parse(readFileSync(draftsFile, 'utf8'))); } catch { return []; } })());
+  const saveDrafts = () => { writeFileSync(draftsFile + '.tmp', JSON.stringify([...drafts]), { mode: 0o600 }); renameSync(draftsFile + '.tmp', draftsFile); };
+  const markUsed = (id: string) => { if (drafts.delete(id)) saveDrafts(); };
   const sessionsFile = path.join(config.state, 'sessions.json');
   const sessions = new Map<string, LoginSession>(existsSync(sessionsFile) ? JSON.parse(readFileSync(sessionsFile, 'utf8')) : []);
   const observer = new CloudObserver(config.cloud, () => [...sessions.values()].reverse().find(session => session.expires > Date.now())?.cloudToken, notices, id => codex.has(id), event => usage.ingest(event));
@@ -89,6 +94,7 @@ export function createStudio(config: Config) {
   function recentConversations(items: Conversation[]) {
     const canonical = new Map<string, Conversation>();
     for (const item of items) {
+      if (drafts.has(item.sessionId)) continue;
       if (codex.has(item.sessionId) && !codex.sessions.get(item.sessionId)?.title && item.sessionTitle) codex.setInfo(item.sessionId, item.sessionTitle, item.projectDisplayName);
       const owned = item.provider === 'codex' ? codex.info(item.sessionId) : undefined;
       const row = owned ? { ...item, ...owned, lastActivity: owned.lastActivity ?? item.lastActivity } : item;
@@ -98,7 +104,7 @@ export function createStudio(config: Config) {
     // Identity, never display name or directory, determines whether rows are aliases.
     for (const session of codex.sessions.values()) {
       const key = 'codex:' + session.id;
-      if (!canonical.has(key)) canonical.set(key, codex.info(session.id)!);
+      if (!canonical.has(key) && !drafts.has(session.id)) canonical.set(key, codex.info(session.id)!);
     }
     return [...canonical.values()].sort((a, b) => (Date.parse(b.lastActivity ?? '') || 0) - (Date.parse(a.lastActivity ?? '') || 0));
   }
@@ -214,6 +220,7 @@ export function createStudio(config: Config) {
     const sessionId = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(result.data.sessionId), title = body.title || '新会话';
     await cloud(`/providers/sessions/${sessionId}`, token, { method: 'PUT', body: JSON.stringify({ summary: title }) });
     if (body.provider === 'codex') codex.register(sessionId, projectPath, { title, projectDisplayName: body.projectName });
+    drafts.add(sessionId); saveDrafts();
     res.status(201).json({ sessionId, provider: body.provider, projectDisplayName: body.projectName, projectPath, sessionTitle: title, lastActivity: new Date().toISOString() });
   }));
   app.get('/api/conversations/:id', asyncRoute(async (req, res) => {
@@ -422,11 +429,12 @@ export function createStudio(config: Config) {
                 if (!remote.length) return; message.sessions = remote;
               } else if (message.type === 'chat.permission-response' && typeof message.requestId === 'string' && message.requestId.startsWith('codex:')) {
                 const answers = message.answers === undefined ? undefined : z.record(z.string(), z.object({ answers: z.array(z.string().max(10000)).max(30) })).parse(message.answers);
-                if (!codex.approve(message.requestId, message.allow === true, answers)) client.send(JSON.stringify({ kind: 'interaction_error', requestId: message.requestId, content: '该请求已处理或已失效，请刷新会话' }));
+                if (!codex.approve(message.requestId, message.allow === true, answers, message.remember === true)) client.send(JSON.stringify({ kind: 'interaction_error', requestId: message.requestId, content: '该请求已处理或已失效，请刷新会话' }));
                 return;
               } else if (message.type === 'chat.send') {
                 void (async () => {
                   const body = z.object({ sessionId: z.string().regex(/^[a-zA-Z0-9_-]+$/), content: z.string().min(1).max(200000), options: z.object({ model: z.string().optional(), effort: z.string().optional(), attachments: z.array(z.unknown()).max(10).optional() }).default({}) }).parse(message);
+                  markUsed(body.sessionId);
                   const resolved = await attachments.resolve(body.options.attachments);
                   if (codex.has(body.sessionId)) { await codex.send(body.sessionId, body.content, body.options, resolved); return; }
                   const session = await cloud('/providers/sessions/' + body.sessionId, ticket.session.cloudToken);
@@ -470,5 +478,5 @@ export function createStudio(config: Config) {
     } catch { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); }
   });
   setTimeout(() => { void jobs.pump(); observer.start(); }, 0).unref();
-  return { app, server, jobs, files, codex, notices, usage, close: () => { observer.close(); codex.close(); jobs.stop(); wss.clients.forEach(c => c.close()); wss.close(); server.close(); } };
+  return { app, server, jobs, files, codex, notices, usage, drafts, markUsed, close: () => { observer.close(); codex.close(); jobs.stop(); wss.clients.forEach(c => c.close()); wss.close(); server.close(); } };
 }

@@ -14,7 +14,7 @@ export type ChatAttachment = { id: string; name: string; size: number; mime: str
 export type FileLocation = z.infer<typeof locationSchema>;
 export type FileEntry = FileLocation & { name: string; directory: boolean; size: number; modified: number; mime: string };
 export type Provider = 'claude' | 'codex';
-export type Conversation = { sessionId: string; provider: Provider; sessionTitle: string; projectDisplayName: string; lastActivity: string | null; projectPath?: string };
+export type Conversation = { sessionId: string; provider: Provider; sessionTitle: string; projectDisplayName: string; lastActivity: string | null; projectPath?: string; projectId?: string | null };
 export const conversationCreateSchema = z.object({
   provider: z.enum(['claude', 'codex']), projectName: z.string().trim().min(1).max(100),
   title: z.string().trim().max(200).default(''), cwd: locationSchema,
