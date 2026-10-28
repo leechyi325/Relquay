@@ -97,3 +97,21 @@ test('quota reset formats the same instant across device zones and observes Paci
   assert.match(quotaReset('2026-12-01T16:00:00Z', now, 'America/Los_Angeles').absolute, /GMT-8/);
   assert.match(quotaReset(reset, Date.parse(reset) + 1000).remaining, /等待刷新/);
 });
+
+test('agent and command documents are managed as plain markdown files with conflict checks', async () => {
+  const f = await fixture();
+  try {
+    const agent = '---\nname: reviewer\ndescription: Reviews diffs\n---\n\nBe strict.\n';
+    const list = await f.extensions.saveDoc('claude', 'agents', 'reviewer', agent);
+    assert.equal(list[0].name, 'reviewer'); assert.equal(list[0].description, 'Reviews diffs'); assert.match(await fs.readFile(path.join(f.temp, 'agent-claude/agents/reviewer.md'), 'utf8'), /Be strict/);
+    await assert.rejects(f.extensions.saveDoc('claude', 'agents', 'reviewer', agent), /已存在/);
+    await assert.rejects(f.extensions.saveDoc('claude', 'agents', 'bad', 'no metadata'), /name 和 description/);
+    await assert.rejects(f.extensions.saveDoc('claude', 'agents', '../escape', agent));
+    await assert.rejects(f.extensions.saveDoc('claude', 'agents', 'reviewer', agent + 'x', 'stale'), /修改/);
+    await assert.rejects(f.extensions.docs('codex', 'agents'), /Codex/);
+    const command = await f.extensions.saveDoc('codex', 'commands', 'ship', '---\ndescription: Ship it\nargument-hint: [branch]\n---\n\nRelease $ARGUMENTS\n');
+    assert.deepEqual([command[0].name, command[0].hint], ['ship', '[branch]']); assert.ok(await fs.stat(path.join(f.temp, 'agent-codex/prompts/ship.md')));
+    await f.extensions.removeDoc('codex', 'commands', 'ship', command[0].revision);
+    assert.equal((await f.extensions.docs('codex', 'commands')).length, 0);
+  } finally { await f.close(); }
+});

@@ -1,9 +1,9 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { defaultOrigin } from '../shared/config';
 import { loadServers, normalizeOrigin } from '../shared/servers';
 interface Credentials { get(options?: { key: string }): Promise<{ token?: string }>; set(options: { token: string; key?: string }): Promise<void>; clear(options?: { key: string }): Promise<void>; }
 const secure = registerPlugin<Credentials>('StudioCredentials');
-const nativeFiles = registerPlugin<{ download(options: { url: string; filename: string; mime?: string }): Promise<void>; openManager(options: { url: string }): Promise<void> }>('StudioFiles');
+const nativeFiles = registerPlugin<{ download(options: { url: string; filename: string; mime?: string }): Promise<void>; addListener(name: 'downloadProgress', listener: (value: { done: number; total: number }) => void): Promise<PluginListenerHandle>; openManager(options: { url: string }): Promise<void> }>('StudioFiles');
 export const isNative = Capacitor.isNativePlatform();
 const nativeOrigin = import.meta.env.VITE_STUDIO_ORIGIN ? normalizeOrigin(import.meta.env.VITE_STUDIO_ORIGIN) : defaultOrigin;
 const initial = loadServers(localStorage, isNative ? nativeOrigin : location.origin);
@@ -61,10 +61,16 @@ export async function socket(channel: 'chat' | 'terminal') {
   return new WebSocket(address.replace(/^http/, 'ws') + `/ws/${channel}?ticket=${encodeURIComponent(ticket)}`);
 }
 export function params(value: { root: string; path: string }) { return new URLSearchParams(value).toString(); }
+export type DownloadState = { name: string; done: number; total: number; state: 'run' | 'done' | 'fail'; message?: string };
+const announce = (detail: DownloadState) => window.dispatchEvent(new CustomEvent<DownloadState>('studio:download', { detail }));
 export async function downloadFile(root: string, path: string) {
-  const server = origin;
+  const server = origin, name = path.split('/').at(-1) ?? 'download';
   const { url } = await post<{ url: string }>('/api/files/preview', { root, path });
   const address = server + url + '?download=1';
-  if (isNative) await nativeFiles.download({ url: address, filename: path.split('/').at(-1) ?? 'download' });
-  else await openExternal(address);
+  if (!isNative) { await openExternal(address); return; }
+  announce({ name, done: 0, total: -1, state: 'run' });
+  const listener = await nativeFiles.addListener('downloadProgress', value => announce({ name, ...value, state: 'run' }));
+  try { await nativeFiles.download({ url: address, filename: name }); announce({ name, done: 1, total: 1, state: 'done' }); }
+  catch(e) { const message = e instanceof Error ? e.message : String(e); announce({ name, done: 0, total: 0, state: 'fail', message }); throw e; }
+  finally { await listener.remove(); }
 }

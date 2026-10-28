@@ -158,14 +158,17 @@ export class CodexBridge {
     this.emit(session, { kind: 'text', role: 'user', content, attachments: attachments.map(({ name, size, mimeType }) => ({ name, size, mime: mimeType })) });
     try {
       await this.start();
-      const config = { cwd: session.cwd, approvalPolicy: 'on-request', sandbox: 'workspace-write', ...(typeof options.model === 'string' ? { model: options.model } : {}) };
+      // 免审批：acceptEdits 保留工作区沙箱但不再询问；bypassPermissions 取消沙箱（与 CloudCLI 的映射一致）。
+      const mode = options.permissionMode === 'bypassPermissions' || options.permissionMode === 'acceptEdits' ? options.permissionMode : 'default';
+      const approvalPolicy = mode === 'default' ? 'on-request' : 'never', sandbox = mode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write';
+      const config = { cwd: session.cwd, approvalPolicy, sandbox, ...(typeof options.model === 'string' ? { model: options.model } : {}) };
       if (!session.threadId) {
         const result = await this.request<{ thread: { id: string } }>('thread/start', config);
         session.threadId = result.thread.id; this.loaded.add(session.threadId); this.persist();
       } else if (!this.loaded.has(session.threadId)) {
         await this.request('thread/resume', { threadId: session.threadId, excludeTurns: true, ...config }); this.loaded.add(session.threadId);
       }
-      const result = await this.request<{ turn: { id: string } }>('turn/start', { threadId: session.threadId, input: [{ type: 'text', text: withFileReferences(content, attachments) }, ...attachments.filter(nativeImage).map(item => ({ type: 'localImage', path: item.path }))], model: model ?? null, effort: effort ?? null });
+      const result = await this.request<{ turn: { id: string } }>('turn/start', { threadId: session.threadId, input: [{ type: 'text', text: withFileReferences(content, attachments) }, ...attachments.filter(nativeImage).map(item => ({ type: 'localImage', path: item.path }))], model: model ?? null, effort: effort ?? null, approvalPolicy, sandboxPolicy: { type: sandbox === 'danger-full-access' ? 'dangerFullAccess' : 'workspaceWrite' } });
       session.turnId = result.turn.id; this.persist();
     } catch(e) { if (session.processing) this.finish(session, false, String(e)); }
   }

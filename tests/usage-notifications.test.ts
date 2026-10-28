@@ -74,3 +74,19 @@ test('Claude server observer receives approval and completion after the client d
   f.studio.notices.begin(id); f.running.add(id); f.publish(id, { kind: 'permission_request', requestId: 'next-turn', toolName: 'AskUserQuestion' }, true);
   await until(() => f.studio.notices.page().items.some(item => item.requestId === 'next-turn')); f.publish(id, { kind: 'complete' }); await until(() => f.studio.notices.page().items.filter(item => item.type === 'agent-complete').length === 2);
 });
+
+test('notifications can be removed or cleared without losing pending approvals or tripping the gap check', async () => {
+  const f = await fixture();
+  try {
+    const id = 'clear-session'; f.studio.notices.begin(id); f.running.add(id);
+    f.publish(id, { kind: 'permission_request', requestId: 'keep-me', toolName: 'Bash', input: {} });
+    f.studio.notices.job({ id: 'j1', status: 'succeeded' } as never); f.studio.notices.job({ id: 'j2', status: 'failed' } as never);
+    await until(() => f.studio.notices.page().items.length === 3);
+    const items = f.studio.notices.page().items, job = items.find(item => item.jobId === 'j1')!, cursor = f.studio.notices.page().cursor;
+    assert.equal((await f.call('/api/notifications/' + job.id, { method: 'DELETE' })).status, 200);
+    assert.equal((await f.call('/api/notifications/' + job.id, { method: 'DELETE' })).status, 404);
+    const cleared = await (await f.call('/api/notifications/clear', { method: 'POST', body: '{}' })).json() as { removed: number; kept: number };
+    assert.deepEqual(cleared, { removed: 1, kept: 1 }); assert.equal(f.studio.notices.page().items[0].requestId, 'keep-me');
+    assert.equal(f.studio.notices.page(cursor - 2).gap, false);
+  } finally { await f.close(); }
+});

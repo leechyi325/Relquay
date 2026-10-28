@@ -9,7 +9,7 @@ import { parse as yaml } from 'yaml';
 import { AgentConfigs } from './agent-config.ts';
 import { HttpError, assertInside } from './files.ts';
 import { readPrivate, writePrivate } from './private-document.ts';
-import { extensionName, pluginIdSchema, type AgentProvider, type McpDetail, type McpDocument, type PluginEntry, type SkillEntry } from '../shared/extensions.ts';
+import { extensionName, pluginIdSchema, type AgentProvider, type DocEntry, type DocKind, type McpDetail, type McpDocument, type PluginEntry, type SkillEntry } from '../shared/extensions.ts';
 const exec = promisify(execFile);
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 export type ExtensionOptions = { home?: string; claudeJson?: string; codexSkillRoots?: string[]; run?: (provider: AgentProvider, args: string[]) => Promise<string> };
@@ -95,6 +95,50 @@ export class Extensions {
     if (skill.revision !== revision) throw new HttpError(409, 'Skill 已被修改，请重新打开');
     const folder = path.dirname(skill.path), stat = await fs.lstat(folder); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new HttpError(403, '不能删除链接目录');
     await fs.rm(folder, { recursive: true });
+  }
+  // 子代理（Claude 的 agents/*.md）与自定义命令（Claude 的 commands/*.md、Codex 的 prompts/*.md）：单个 Markdown 文件，带可选 YAML 元数据。
+  private docRoot(provider: AgentProvider, kind: DocKind) {
+    if (provider === 'claude') return path.join(this.configs.home(provider), kind);
+    if (kind === 'agents') throw new HttpError(404, 'Codex 没有子代理文件，请在配置中管理');
+    return path.join(this.configs.home(provider), 'prompts');
+  }
+  private docMetadata(content: string) {
+    const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
+    let value: Record<string, unknown> = {};
+    try { if (match) value = record(yaml(match[1])); } catch { throw new HttpError(400, '元数据（开头 --- 之间的 YAML）格式有误'); }
+    const text = (key: string) => { const item = value[key]; return typeof item === 'string' ? item.trim() : Array.isArray(item) ? `[${item.join(', ')}]` : ''; };
+    return { name: text('name'), description: text('description'), hint: text('argument-hint') };
+  }
+  async docs(provider: AgentProvider, kind: DocKind): Promise<DocEntry[]> {
+    const root = this.docRoot(provider, kind); let entries;
+    try { entries = await fs.readdir(root, { withFileTypes: true }); } catch(e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []; throw e; }
+    const result: DocEntry[] = [];
+    for (const entry of entries.filter(entry => entry.name.endsWith('.md') && !entry.name.startsWith('.')).sort((a, b) => a.name.localeCompare(b.name))) {
+      const name = entry.name.slice(0, -3);
+      try {
+        const file = await readPrivate(path.join(root, entry.name), 256 * 1024); if (!file.exists) continue;
+        let meta = { name: '', description: '', hint: '' }; try { meta = this.docMetadata(file.content); } catch { meta.description = '元数据有误，打开编辑以修复'; }
+        result.push({ name, description: meta.description || file.content.replace(/^---[\s\S]*?---\s*/, '').trim().split('\n')[0]?.slice(0, 120) || '', hint: meta.hint, revision: file.revision, content: file.content, editable: true });
+      } catch(e) { if (e instanceof HttpError) result.push({ name, description: '文件不可编辑（符号链接或过大），请在服务器处理', hint: '', revision: '', content: '', editable: false }); else if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    }
+    return result;
+  }
+  async saveDoc(provider: AgentProvider, kind: DocKind, name: string, content: string, revision?: string) {
+    extensionName.parse(name);
+    if (Buffer.byteLength(content) > 256 * 1024) throw new HttpError(413, '文件超过 256KB');
+    const meta = this.docMetadata(content);
+    if (kind === 'agents' && (!meta.name || !meta.description)) throw new HttpError(400, '子代理需要 name 和 description 元数据');
+    const file = await readPrivate(path.join(this.docRoot(provider, kind), name + '.md'), 256 * 1024);
+    if (revision === undefined ? file.exists : file.revision !== revision) throw new HttpError(409, revision === undefined ? '同名文件已存在' : '文件已被修改，请重新打开');
+    await writePrivate(file, content);
+    return this.docs(provider, kind);
+  }
+  async removeDoc(provider: AgentProvider, kind: DocKind, name: string, revision: string) {
+    extensionName.parse(name);
+    const file = await readPrivate(path.join(this.docRoot(provider, kind), name + '.md'), 256 * 1024);
+    if (!file.exists) throw new HttpError(404, '文件不存在');
+    if (file.revision !== revision) throw new HttpError(409, '文件已被修改，请重新打开');
+    await fs.rm(file.path);
   }
   private async mcpState(provider: AgentProvider) {
     const file = provider === 'codex' ? await this.configs.read(provider) : await readPrivate(this.claudeJson);

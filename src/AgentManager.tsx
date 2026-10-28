@@ -4,9 +4,10 @@ import { api } from './api';
 import { Sheet } from './Files';
 import { DirectoryBrowser } from './FileModules';
 import { AgentConfigEditor } from './AgentConfig';
+import { AgentDocs } from './AgentDocs';
 import type { AgentProvider, McpDetail, McpDocument, PluginEntry, SkillEntry } from '../shared/extensions';
-type Tab = 'config' | 'skills' | 'mcp' | 'plugins';
-const tabs: { id: Tab; label: string }[] = [{ id: 'config', label: '配置' }, { id: 'skills', label: 'Skills' }, { id: 'mcp', label: 'MCP' }, { id: 'plugins', label: '插件' }];
+type Tab = 'config' | 'skills' | 'agents' | 'commands' | 'mcp' | 'plugins';
+const tabs: { id: Tab; label: string }[] = [{ id: 'config', label: '配置' }, { id: 'skills', label: 'Skills' }, { id: 'agents', label: '子代理' }, { id: 'commands', label: '命令' }, { id: 'mcp', label: 'MCP' }, { id: 'plugins', label: '插件' }];
 const template = (name: string) => `---\nname: ${name}\ndescription: 描述这个 Skill 的用途\n---\n\n# ${name}\n\n在这里编写工作流程与说明。\n`;
 export function AgentManager({ provider, close, toast }: { provider: AgentProvider; close: () => void; toast: (text: string) => void }) {
   const base = '/api/agents/' + provider;
@@ -18,7 +19,7 @@ export function AgentManager({ provider, close, toast }: { provider: AgentProvid
   const guard = useCallback((check: (() => boolean) | undefined) => { configGuard.current = check; }, []);
   const canLeave = () => !busy && (!configGuard.current || configGuard.current()) && (!form || JSON.stringify([name, content, enabled, folder]) === baseline.current || confirm('修改尚未保存，确定放弃？'));
   useEffect(() => {
-    if (tab === 'config') return;
+    if (tab === 'config' || tab === 'agents' || tab === 'commands') return;
     const controller = new AbortController(); setBusy(true); setError('');
     const load = tab === 'skills' ? api<SkillEntry[]>(base + '/skills', { signal: controller.signal }).then(setSkills) : tab === 'mcp' ? api<McpDocument>(base + '/mcp', { signal: controller.signal }).then(setMcps) : api<PluginEntry[]>(base + '/plugins', { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(130000)]) }).then(setPlugins);
     void load.catch(e => { if (!controller.signal.aborted) setError(String(e)); }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
@@ -33,8 +34,8 @@ export function AgentManager({ provider, close, toast }: { provider: AgentProvid
     if (form === 'mcp') { let value: unknown; try { value = JSON.parse(content); if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error(); } catch { setError('请输入合法的 MCP JSON 对象'); return; } void action(() => api(base + '/mcp', { method: 'PUT', body: JSON.stringify({ name, config: value, enabled, create: !mcp, revision: mcp?.revision ?? mcps.revision }) }), 'MCP 配置已保存'); }
     if (form === 'plugin') void action(() => api(base + '/plugins', { method: 'POST', body: JSON.stringify({ id: name, action: 'install' }), signal: AbortSignal.timeout(150000) }), '插件已安装；请新建会话使用');
   }
-  return <Sheet title={(provider === 'claude' ? 'Claude Code' : 'Codex') + ' 设置'} close={() => { if (canLeave()) close(); }}><div className="agent-scope">当前服务器 · 用户级</div><div className="filter-tabs agent-tabs">{tabs.map(item => <button key={item.id} disabled={busy} className={tab === item.id ? 'active' : ''} onClick={() => { if (item.id !== tab && canLeave()) { setForm(undefined); setDeleting(undefined); setTab(item.id); } }}>{item.label}</button>)}</div>
-    {tab === 'config' ? <AgentConfigEditor provider={provider} guard={guard} toast={toast}/> : <>
+  return <Sheet title={(provider === 'claude' ? 'Claude Code' : 'Codex') + ' 设置'} close={() => { if (canLeave()) close(); }}><div className="agent-scope">当前服务器 · 用户级</div><div className="filter-tabs agent-tabs">{tabs.filter(item => provider === 'claude' || item.id !== 'agents').map(item => <button key={item.id} disabled={busy} className={tab === item.id ? 'active' : ''} onClick={() => { if (item.id !== tab && canLeave()) { setForm(undefined); setDeleting(undefined); setTab(item.id); } }}>{item.label}</button>)}</div>
+    {tab === 'config' ? <AgentConfigEditor provider={provider} guard={guard} toast={toast}/> : tab === 'agents' || tab === 'commands' ? <AgentDocs key={provider + tab} provider={provider} kind={tab} guard={guard} toast={toast}/> : <>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {deleting ? <div className="extension-confirm"><h3>{deleting.kind === 'plugin' ? '卸载插件' : '移除扩展'}</h3><p>确认移除「{deleting.name}」？{deleting.kind === 'skill' ? '此 Skill 目录及其支持文件将被删除。' : deleting.kind === 'mcp' ? '连接配置将被移除。' : '代理将处理该插件的安装记录和缓存。'}</p><div className="interaction-actions"><button disabled={busy} onClick={() => setDeleting(undefined)}>保留</button><button disabled={busy} className="primary" onClick={() => void action(() => api(base + (deleting.kind === 'skill' ? '/skills/' + deleting.id : deleting.kind === 'mcp' ? '/mcp/' + encodeURIComponent(deleting.id) : '/plugins'), { method: deleting.kind === 'plugin' ? 'POST' : 'DELETE', body: JSON.stringify(deleting.kind === 'plugin' ? { id: deleting.id, action: 'remove' } : { revision: deleting.revision }), signal: AbortSignal.timeout(150000) }), '扩展已移除')}>确认移除</button></div></div> : form ? <>
         <button className="extension-back" disabled={busy} onClick={() => { if (canLeave()) setForm(undefined); }}><ArrowLeft size={16}/>返回列表</button>

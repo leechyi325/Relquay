@@ -16,7 +16,7 @@ import { Attachments, withFileReferences } from './attachments.ts';
 import { cloudModels, validateModel } from './models.ts';
 import { Files, HttpError, streamFile } from './files.ts';
 import { Extensions } from './extensions.ts';
-import { providerSchema, extensionName, mcpWriteSchema, skillWriteSchema, pluginIdSchema } from '../shared/extensions.ts';
+import { providerSchema, extensionName, mcpWriteSchema, skillWriteSchema, pluginIdSchema, docKindSchema, docWriteSchema } from '../shared/extensions.ts';
 import { AgentConfigs } from './agent-config.ts';
 import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
@@ -166,12 +166,18 @@ export function createStudio(config: Config) {
   app.get('/api/notifications', (req, res, next) => { try { observer.start(); const after = z.coerce.number().int().nonnegative().optional().parse(req.query.after); res.json(notices.page(after)); } catch(e) { next(e); } });
   app.get('/api/notifications/:id', (req, res, next) => { try { res.json(notices.get(String(req.params.id))); } catch(e) { next(e); } });
   app.post('/api/notifications/read-all', (_req, res) => { notices.read(); res.json({ ok: true }); });
+  app.post('/api/notifications/clear', (req, res, next) => { try { res.json(notices.clear(z.enum(['all', 'read']).default('all').parse(req.body?.scope))); } catch(e) { next(e); } });
+  app.delete('/api/notifications/:id', (req, res, next) => { try { notices.remove(String(req.params.id)); res.json({ ok: true }); } catch(e) { next(e); } });
   app.post('/api/notifications/:id/read', (req, res, next) => { try { notices.read(String(req.params.id)); res.json({ ok: true }); } catch(e) { next(e); } });
   app.get('/api/agents/:provider/skills', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.skills(providerSchema.parse(req.params.provider))); }));
   app.post('/api/agents/:provider/skills', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = skillWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveSkill(provider, body.name, body.content))); }));
   app.put('/api/agents/:provider/skills/:id', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = skillWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveSkill(provider, body.name, body.content, String(req.params.id), body.revision))); }));
   app.post('/api/agents/:provider/skills/import', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = z.object({ name: extensionName, path: z.string().min(1).max(2000) }).parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.importSkill(provider, body.name, body.path))); }));
   app.delete('/api/agents/:provider/skills/:id', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = z.object({ revision: z.string() }).parse(req.body); await extensions.exclusive(provider, () => extensions.removeSkill(provider, String(req.params.id), body.revision)); res.json({ ok: true }); }));
+  app.get('/api/agents/:provider/docs/:kind', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.docs(providerSchema.parse(req.params.provider), docKindSchema.parse(req.params.kind))); }));
+  app.post('/api/agents/:provider/docs/:kind', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), kind = docKindSchema.parse(req.params.kind), body = docWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveDoc(provider, kind, body.name, body.content))); }));
+  app.put('/api/agents/:provider/docs/:kind/:name', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), kind = docKindSchema.parse(req.params.kind), body = docWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveDoc(provider, kind, extensionName.parse(req.params.name), body.content, body.revision ?? ''))); }));
+  app.delete('/api/agents/:provider/docs/:kind/:name', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), kind = docKindSchema.parse(req.params.kind), body = z.object({ revision: z.string() }).parse(req.body); await extensions.exclusive(provider, () => extensions.removeDoc(provider, kind, String(req.params.name), body.revision)); res.json(await extensions.docs(provider, kind)); }));
   app.get('/api/agents/:provider/mcp', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.mcps(providerSchema.parse(req.params.provider))); }));
   app.get('/api/agents/:provider/mcp/:name', asyncRoute(async (req, res) => { res.set('Cache-Control', 'no-store'); res.json(await extensions.mcps(providerSchema.parse(req.params.provider), extensionName.parse(req.params.name))); }));
   app.put('/api/agents/:provider/mcp', asyncRoute(async (req, res) => { const provider = providerSchema.parse(req.params.provider), body = mcpWriteSchema.parse(req.body); res.json(await extensions.exclusive(provider, () => extensions.saveMcp(provider, body.name, body.config, body.enabled, body.revision, false, body.create))); }));
@@ -433,7 +439,7 @@ export function createStudio(config: Config) {
                 return;
               } else if (message.type === 'chat.send') {
                 void (async () => {
-                  const body = z.object({ sessionId: z.string().regex(/^[a-zA-Z0-9_-]+$/), content: z.string().min(1).max(200000), options: z.object({ model: z.string().optional(), effort: z.string().optional(), attachments: z.array(z.unknown()).max(10).optional() }).default({}) }).parse(message);
+                  const body = z.object({ sessionId: z.string().regex(/^[a-zA-Z0-9_-]+$/), content: z.string().min(1).max(200000), options: z.object({ permissionMode: z.enum(['default', 'acceptEdits', 'bypassPermissions']).default('default'), model: z.string().optional(), effort: z.string().optional(), attachments: z.array(z.unknown()).max(10).optional() }).default({ permissionMode: 'default' }) }).parse(message);
                   markUsed(body.sessionId);
                   const resolved = await attachments.resolve(body.options.attachments);
                   if (codex.has(body.sessionId)) { await codex.send(body.sessionId, body.content, body.options, resolved); return; }
@@ -443,7 +449,7 @@ export function createStudio(config: Config) {
                   const selected = validateModel(models, body.options.model, body.options.effort);
                   const images = await attachments.claudeImages(resolved);
                   notices.begin(body.sessionId); observer.begin(body.sessionId);
-                  const prepared = { type: 'chat.send', sessionId: body.sessionId, content: withFileReferences(body.content, resolved), options: { permissionMode: 'default', model: body.options.model ?? selected?.id, effort: body.options.effort ?? 'default', attachments: images } };
+                  const prepared = { type: 'chat.send', sessionId: body.sessionId, content: withFileReferences(body.content, resolved), options: { permissionMode: body.options.permissionMode, model: body.options.model ?? selected?.id, effort: body.options.effort ?? 'default', attachments: images } };
                   if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify(prepared)); else if (buffer.length < 30) buffer.push(Buffer.from(JSON.stringify(prepared)));
                 })().catch(e => { if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ kind: 'protocol_error', sessionId: message.sessionId, content: String(e) })); });
                 return;

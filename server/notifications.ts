@@ -6,18 +6,19 @@ import type { ChatEvent, Job } from '../shared/protocol.ts';
 import { HttpError } from './files.ts';
 
 type Run = { key: string; startedAt: number; active: boolean; absent: number };
-type State = { seq: number; items: Notice[]; seen: string[]; runs: Record<string, Run> };
+type State = { seq: number; items: Notice[]; seen: string[]; runs: Record<string, Run>; lost?: number };
 export class NotificationStore {
   private file: string; private state: State;
   constructor(directory: string) {
     this.file = path.join(directory, 'notifications.json');
     this.state = fs.existsSync(this.file) ? JSON.parse(fs.readFileSync(this.file, 'utf8')) : { seq: 0, items: [], seen: [], runs: {} };
     this.state.items = noticeSchema.array().parse(this.state.items);
+    this.state.lost ??= (this.state.items[0]?.seq ?? 1) - 1;
   }
   get(id: string) { const item = this.state.items.find(item => item.id === id); if (!item) throw new HttpError(404, '提醒已移除或过期'); return item; }
   page(after?: number): NoticePage {
     const all = after === undefined ? [...this.state.items].reverse() : this.state.items.filter(item => item.seq > after), items = all.slice(0, 100);
-    return { items, cursor: after === undefined ? this.state.seq : items.at(-1)?.seq ?? this.state.seq, unread: this.state.items.filter(item => !item.readAt && !item.resolvedAt).length, hasMore: all.length > items.length, gap: after !== undefined && (after > this.state.seq || after > 0 && after < (this.state.items[0]?.seq ?? 1) - 1) };
+    return { items, cursor: after === undefined ? this.state.seq : items.at(-1)?.seq ?? this.state.seq, unread: this.state.items.filter(item => !item.readAt && !item.resolvedAt).length, hasMore: all.length > items.length, gap: after !== undefined && (after > this.state.seq || after > 0 && after < (this.state.lost ?? 0)) };
   }
   read(id?: string) {
     const now = new Date().toISOString();
@@ -27,7 +28,15 @@ export class NotificationStore {
   private add(key: string, value: Omit<Notice, 'id' | 'seq' | 'createdAt'>) {
     if (this.state.seen.includes(key)) return;
     this.state.seen.push(key); this.state.seen = this.state.seen.slice(-3000);
-    this.state.items.push({ ...value, id: crypto.randomUUID(), seq: ++this.state.seq, createdAt: new Date().toISOString() }); this.state.items = this.state.items.slice(-500); this.persist();
+    this.state.items.push({ ...value, id: crypto.randomUUID(), seq: ++this.state.seq, createdAt: new Date().toISOString() }); this.trim(); this.persist();
+  }
+  // 超出 500 条时丢弃最旧提醒，并记下丢弃到哪个序号，客户端据此判断是否漏看；手动清除不计入。
+  private trim() { const dropped = this.state.items.splice(0, Math.max(0, this.state.items.length - 500)); if (dropped.length) this.state.lost = Math.max(this.state.lost ?? 0, dropped.at(-1)!.seq); }
+  remove(id: string) { const item = this.get(id); this.state.items = this.state.items.filter(value => value !== item); this.persist(); }
+  // 仍在等待回应的批准/提问不会被清除，避免误删后无法找到。
+  clear(scope: 'all' | 'read' = 'all') {
+    const keep = (item: Notice) => ['approval', 'question'].includes(item.type) && !item.resolvedAt || scope === 'read' && !item.readAt && !item.resolvedAt, before = this.state.items.length;
+    this.state.items = this.state.items.filter(keep); this.persist(); return { removed: before - this.state.items.length, kept: this.state.items.length };
   }
   private persist() { fs.writeFileSync(this.file + '.tmp', JSON.stringify(this.state), { mode: 0o600 }); fs.renameSync(this.file + '.tmp', this.file); }
   begin(sessionId: string) {

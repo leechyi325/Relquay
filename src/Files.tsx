@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowLeft, ArrowUpRight, Check, ChevronRight, Code2, File, FileAudio, FileImage, FileText, Film, Folder, FolderPlus, Grid2X2, List, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, Settings2, Search, Upload, X } from 'lucide-react';
-import Markdown from 'react-markdown';
-import { api, post, params, origin, downloadFile } from './api';
+import { ChatMarkdown } from './ChatMarkdown';
+import { api, post, params, origin, downloadFile, type DownloadState } from './api';
 import { useFileModules, useRootNames } from './file-roots';
 import { FileModuleManager } from './FileModules';
 import type { FileEntry, FileLocation } from '../shared/protocol';
@@ -11,6 +11,13 @@ export function bytes(value: number) { return value < 1024 ? value + ' B' : valu
 function FileIcon({ entry, size = 24 }: { entry: FileEntry; size?: number }) {
   const Icon = entry.directory ? Folder : entry.mime.startsWith('video') ? Film : entry.mime.startsWith('image') ? FileImage : entry.mime.startsWith('audio') ? FileAudio : entry.mime.startsWith('text') || entry.mime.includes('json') ? FileText : File;
   return <Icon size={size} strokeWidth={1.5}/>;
+}
+export function DownloadBar() {
+  const [item, setItem] = useState<DownloadState>();
+  useEffect(() => { let timer: ReturnType<typeof setTimeout>; const on = (e: Event) => { const value = (e as CustomEvent<DownloadState>).detail; setItem(value); clearTimeout(timer); if (value.state !== 'run') timer = setTimeout(() => setItem(undefined), value.state === 'done' ? 4000 : 8000); }; window.addEventListener('studio:download', on); return () => { window.removeEventListener('studio:download', on); clearTimeout(timer); }; }, []);
+  if (!item) return null;
+  const known = item.total > 0, percent = item.state === 'done' ? 100 : known ? Math.min(99, Math.floor(item.done / item.total * 100)) : 0;
+  return <div className={'download-bar ' + item.state} role="status"><div><strong>{item.state === 'done' ? '已保存 ' : item.state === 'fail' ? '下载失败 ' : '正在下载 '}{item.name}</strong><small>{item.state === 'run' ? (known ? `${bytes(item.done)} / ${bytes(item.total)} · ${percent}%` : bytes(item.done)) : item.state === 'fail' ? item.message : '文件已完整保存'}</small></div><span className="download-track"><i style={{ width: percent + '%' }}/></span></div>;
 }
 export function Sheet({ title, children, close }: { title: string; children: React.ReactNode; close: () => void }) {
   useEffect(() => { const key = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); }; document.addEventListener('keydown', key); return () => document.removeEventListener('keydown', key); }, [close]);
@@ -78,6 +85,6 @@ function FileViewer({ entry, close, reference, toast }: { entry: FileEntry; clos
     catch(e) { toast(String(e)); }
   }
   return <div className="viewer" role="dialog" aria-modal="true" aria-label={'预览 ' + entry.name}><header><button className="icon-button" aria-label="关闭预览" onClick={() => { if (text !== saved && !confirm('修改尚未保存，确定关闭？')) return; close(); }}><X size={21}/></button><div><strong>{entry.name}</strong><span>{bytes(entry.size)} · {rootNames[entry.root]}</span></div><button className="icon-button" aria-label="下载文件" onClick={() => void downloadFile(entry.root, entry.path).catch(e => toast(e.message))}><ArrowDownToLine size={20}/></button></header><div className="viewer-actions"><button onClick={reference}><ArrowUpRight size={16}/>引用到对话</button>{['text', 'html'].includes(kind) && <button onClick={() => setEditing(!editing)}><Pencil size={16}/>{editing ? '预览' : '编辑源码'}</button>}{editing && <button disabled={text === saved} onClick={() => void save()}><Check size={16}/>保存修改</button>}</div><div className={'viewer-body ' + (kind === 'html' || editing ? 'fill' : '')}>
-      {error ? <div className="empty"><File size={35}/><p>{error}</p><button className="primary" onClick={() => void downloadFile(entry.root, entry.path)}>下载原文件</button></div> : editing ? <textarea aria-label="文件内容" className="code-editor" value={text} onChange={e => setText(e.target.value)} spellCheck={false}/> : !url ? <LoaderCircle className="spin"/> : kind === 'image' ? <img src={url} alt={entry.name}/> : kind === 'video' ? <video src={url} controls playsInline preload="metadata"/> : kind === 'audio' ? <div className="audio-player"><FileAudio size={70}/><h3>{entry.name}</h3><audio src={url} controls preload="metadata"/></div> : kind === 'html' || kind === 'pdf' ? <iframe title={entry.name} src={url} sandbox="allow-scripts allow-downloads"/> : entry.name.endsWith('.md') ? <article className="markdown"><Markdown>{text}</Markdown></article> : <pre className="text-preview">{text}</pre>}
+      {error ? <div className="empty"><File size={35}/><p>{error}</p><button className="primary" onClick={() => void downloadFile(entry.root, entry.path)}>下载原文件</button></div> : editing ? <textarea aria-label="文件内容" className="code-editor" value={text} onChange={e => setText(e.target.value)} spellCheck={false}/> : !url ? <LoaderCircle className="spin"/> : kind === 'image' ? <img src={url} alt={entry.name}/> : kind === 'video' ? <video src={url} controls playsInline preload="metadata"/> : kind === 'audio' ? <div className="audio-player"><FileAudio size={70}/><h3>{entry.name}</h3><audio src={url} controls preload="metadata"/></div> : kind === 'html' || kind === 'pdf' ? <iframe title={entry.name} src={url} sandbox="allow-scripts allow-downloads"/> : /\.(md|markdown)$/i.test(entry.name) ? <ChatMarkdown document content={text} assetBase={url.slice(0, url.lastIndexOf('/') + 1)}/> : <pre className="text-preview">{text}</pre>}
     </div></div>;
 }
