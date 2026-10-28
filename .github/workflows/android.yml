@@ -40,10 +40,10 @@ jobs:
       - run: npm ci
       - name: Build debug APK
         env:
-          STUDIO_JAVA_HOME: ${{ env.JAVA_HOME }}
-          STUDIO_ANDROID_SDK: ${{ env.ANDROID_HOME }}
           VITE_STUDIO_ORIGIN: ${{ inputs.origin }}
         run: |
+          # ${{ env.* }} 读不到 runner 自带的环境变量，这里在 shell 里取。
+          export STUDIO_JAVA_HOME="$JAVA_HOME" STUDIO_ANDROID_SDK="$ANDROID_HOME"
           chmod +x android/gradlew
           [ -n "$VITE_STUDIO_ORIGIN" ] || unset VITE_STUDIO_ORIGIN
           bash scripts/build-android.sh
