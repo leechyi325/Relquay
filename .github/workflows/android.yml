@@ -1,0 +1,52 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      origin:
+        description: 初始服务器地址（可留空，安装后也可在 App 内添加）
+        required: false
+        default: ''
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK packages
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - run: npm ci
+      - name: Build debug APK
+        env:
+          STUDIO_JAVA_HOME: ${{ env.JAVA_HOME }}
+          STUDIO_ANDROID_SDK: ${{ env.ANDROID_HOME }}
+          VITE_STUDIO_ORIGIN: ${{ inputs.origin }}
+        run: |
+          chmod +x android/gradlew
+          [ -n "$VITE_STUDIO_ORIGIN" ] || unset VITE_STUDIO_ORIGIN
+          bash scripts/build-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relquay-debug-apk
+          path: artifacts/relquay-*-debug.apk
+          if-no-files-found: error
+          retention-days: 30
