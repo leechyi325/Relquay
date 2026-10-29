@@ -50,13 +50,20 @@ export function reduceChat(state: ChatState, event: ChatEvent): ChatState {
     case 'token_usage': break;
     case 'status': if (!event.tokenBudget) next.processing = true; break;
     case 'complete': next.processing = false; next.permissions = []; break;
-    case 'protocol_error': next.error = String(event.message ?? event.content ?? '会话连接错误'); next.processing = false; break;
+    case 'protocol_error': {
+      // 发送被拒不代表任务停了：上一轮仍在运行时保持“处理中”，让停止按钮可用，并撤回未送达的消息。
+      const busy = event.code === 'RUN_IN_PROGRESS', idle = event.code === 'NO_ACTIVE_RUN';
+      next.error = busy ? '消息未发送：AI 仍在处理上一项任务。请先点停止，或等它完成后再发送。' : idle ? '当前没有可停止的运行；若仍有后台任务，请稍后查看结果。' : String(event.message ?? event.error ?? event.content ?? '会话连接错误');
+      next.processing = busy; next.events = state.events;
+      if (!idle) next.events = state.events.filter(e => e.optimistic !== true);
+      break;
+    }
     case 'interaction_error': next.error = String(event.content ?? '回应未被接受'); break;
     default: if (event.kind !== 'session_upserted' && event.kind !== 'loading_progress') next.processing = true;
   }
   if (event.kind !== 'session_upserted' && event.kind !== 'loading_progress') {
     const optimistic = event.kind === 'text' && event.role === 'user' ? state.events.findIndex(e => e.optimistic === true) : -1;
-    next.events = optimistic >= 0 ? state.events.map((e, i) => i === optimistic ? event : e) : [...state.events, event];
+    next.events = optimistic >= 0 ? state.events.map((e, i) => i === optimistic ? event : e) : [...next.events, event];
   }
   return next;
 }

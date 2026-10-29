@@ -90,3 +90,12 @@ test('notifications can be removed or cleared without losing pending approvals o
     assert.equal(f.studio.notices.page(cursor - 2).gap, false);
   } finally { await f.close(); }
 });
+
+test('rejected send keeps a running session stoppable and withdraws the unsent message', async () => {
+  const { reduceChat, emptyChat } = await import('../shared/protocol.ts');
+  const sent = reduceChat({ ...emptyChat, processing: true }, { kind: 'text', role: 'user', content: 'pdf', optimistic: true });
+  const busy = reduceChat(sent, { kind: 'protocol_error', code: 'RUN_IN_PROGRESS', error: 'busy' });
+  assert.equal(busy.processing, true); assert.equal(busy.events.some(e => e.optimistic), false); assert.match(busy.error ?? '', /未发送/);
+  const gone = reduceChat(sent, { kind: 'protocol_error', code: 'NO_ACTIVE_RUN' });
+  assert.equal(gone.processing, false);
+});
