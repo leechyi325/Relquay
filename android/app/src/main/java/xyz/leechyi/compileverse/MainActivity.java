@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(StudioCredentialsPlugin.class);
         registerPlugin(StudioFilesPlugin.class);
         registerPlugin(StudioNotificationsPlugin.class);
+        registerPlugin(StudioThemePlugin.class);
         super.onCreate(savedInstanceState);
         if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);
     }

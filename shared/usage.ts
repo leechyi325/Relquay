@@ -5,6 +5,7 @@ export const tokenSnapshotSchema = z.object({
   inputTokens: count.optional(), outputTokens: count.optional(), cachedInputTokens: count.optional(), cacheWriteTokens: count.optional(), reasoningTokens: count.optional(), totalTokens: count.optional(), contextTokens: count.optional(), contextWindow: count.optional(),
 });
 export type TokenSnapshot = z.infer<typeof tokenSnapshotSchema>;
+export type TranscriptTotals = { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; calls: number; updatedAt: string };
 export type QuotaWindow = { id: string; name: string; usedPercent: number; durationMinutes?: number; resetsAt?: string };
 export type AccountUsage = { provider: 'claude' | 'codex'; status: 'available' | 'partial' | 'unavailable'; updatedAt: string; source: string; reason?: string; windows: QuotaWindow[]; lifetimeTokens?: number; daily?: { date: string; tokens: number }[]; credits?: { balance?: string; unlimited: boolean; hasCredits: boolean } };
 const optionalCount = count.nullish().transform(value => value ?? undefined);

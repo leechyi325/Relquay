@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { codexTokens, claudeTokens, claudeAccount, unavailableUsage, tokenSnapshotSchema, type TokenSnapshot, type AccountUsage } from '../shared/usage.ts';
 import type { Conversation } from '../shared/protocol.ts';
-import type { SessionUsage } from '../shared/usage.ts';
+import type { SessionUsage, TranscriptTotals } from '../shared/usage.ts';
 import type { ChatEvent } from '../shared/protocol.ts';
 
 export class UsageStore {
@@ -32,6 +32,9 @@ export class UsageStore {
     return [...rows.values()].sort((a, b) => (b.snapshot?.updatedAt ?? '').localeCompare(a.snapshot?.updatedAt ?? ''));
   }
   set(id: string, value: TokenSnapshot) {
+    // 新回合开始时 Claude 会先报一次全 0，不能覆盖上一次真实的上下文数据。
+    const previous = this.snapshots.get(id);
+    if (value.provider === 'claude' && !value.contextTokens && !value.inputTokens && !value.outputTokens && previous?.contextTokens) return;
     this.snapshots.delete(id); this.snapshots.set(id, value);
     if (this.snapshots.size > 1000) this.snapshots.delete(this.snapshots.keys().next().value!);
     fs.writeFileSync(this.filename + '.tmp', JSON.stringify(Object.fromEntries(this.snapshots)), { mode: 0o600 }); fs.renameSync(this.filename + '.tmp', this.filename);
@@ -63,4 +66,30 @@ export class ClaudeQuota {
       return claudeAccount(await response.json());
     } catch { return unavailableUsage('claude', '暂未取得 Claude 账号额度；本机密钥模式或未登录时可能不提供'); }
   }
+}
+
+// Claude 只汇报最近一次调用的上下文；累计值直接读会话记录（每个 message.id 只取最后一条，流式分片不会重复计数）。
+const transcriptCache = new Map<string, { key: string; totals: TranscriptTotals }>();
+export async function claudeTranscriptTotals(sessionId: string, root = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'projects')): Promise<TranscriptTotals | null> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return null;
+  let file = '';
+  try { for (const dir of await fs.promises.readdir(root)) { const candidate = path.join(root, dir, sessionId + '.jsonl'); if (fs.existsSync(candidate)) { file = candidate; break; } } } catch { return null; }
+  if (!file) return null;
+  const stat = await fs.promises.stat(file), key = stat.mtimeMs + ':' + stat.size, cached = transcriptCache.get(file);
+  if (cached?.key === key) return cached.totals;
+  const calls = new Map<string, [number, number, number, number]>();
+  const lines = (await fs.promises.readFile(file, 'utf8')).split('\n');
+  for (const line of lines) {
+    if (!line.includes('"usage"')) continue;
+    try {
+      const entry = JSON.parse(line), message = entry.message, usage = message?.usage;
+      if (entry.type !== 'assistant' || !usage) continue;
+      const n = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
+      calls.set(String(message.id ?? entry.uuid), [n(usage.input_tokens), n(usage.output_tokens), n(usage.cache_read_input_tokens), n(usage.cache_creation_input_tokens)]);
+    } catch { /* 跳过写到一半的行 */ }
+  }
+  const totals: TranscriptTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, calls: calls.size, updatedAt: new Date(stat.mtimeMs).toISOString() };
+  for (const [input, output, read, write] of calls.values()) { totals.inputTokens += input; totals.outputTokens += output; totals.cacheReadTokens += read; totals.cacheWriteTokens += write; }
+  transcriptCache.set(file, { key, totals }); if (transcriptCache.size > 50) transcriptCache.delete(transcriptCache.keys().next().value!);
+  return totals;
 }

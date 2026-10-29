@@ -6,4 +6,7 @@ import './usage-notices.css';
 import './workspace.css';
 import './terminal.css';
 import './sessions.css';
+import './dark.generated.css';
+import { applyTheme, storedTheme } from './theme';
+applyTheme(storedTheme());
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

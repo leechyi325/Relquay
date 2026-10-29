@@ -21,7 +21,7 @@ import { AgentConfigs } from './agent-config.ts';
 import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
 import { appVersion } from '../shared/config.ts';
-import { UsageStore, ClaudeQuota } from './usage.ts';
+import { UsageStore, ClaudeQuota, claudeTranscriptTotals } from './usage.ts';
 import { NotificationStore } from './notifications.ts';
 import { CloudObserver } from './cloud-observer.ts';
 import { claudeTokens } from '../shared/usage.ts';
@@ -161,7 +161,8 @@ export function createStudio(config: Config) {
     }
     res.set('Cache-Control', 'no-store');
     const snapshot = usage.forSession(id, value => codex.resolveId(value));
-    res.json({ snapshot, reason: snapshot ? undefined : '首轮返回用量后显示；尚未报告的数据不会估算' });
+    const cumulative = snapshot?.provider === 'claude' || (!snapshot && !codex.has(id)) ? await claudeTranscriptTotals(id).catch(() => null) : null;
+    res.json({ snapshot, cumulative, reason: snapshot || cumulative ? undefined : '首轮返回用量后显示；尚未报告的数据不会估算' });
   }));
   app.get('/api/notifications', (req, res, next) => { try { observer.start(); const after = z.coerce.number().int().nonnegative().optional().parse(req.query.after); res.json(notices.page(after)); } catch(e) { next(e); } });
   app.get('/api/notifications/:id', (req, res, next) => { try { res.json(notices.get(String(req.params.id))); } catch(e) { next(e); } });

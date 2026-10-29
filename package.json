@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "server": "tsx server/index.ts",
-    "build": "tsc --noEmit && vite build",
+    "theme": "node scripts/make-dark.mjs",
+    "build": "node scripts/make-dark.mjs && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:ui": "node scripts/check-ui.mjs",
