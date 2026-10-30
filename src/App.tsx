@@ -15,7 +15,7 @@ import { NewSession, SessionActions } from './Sessions';
 import { appVersion, productName, productNameZh } from '../shared/config';
 import { FileRootsProvider, useFileModules } from './file-roots';
 import { Servers, useServers } from './Servers';
-import type { ServerProfile } from '../shared/servers';
+import { normalizeOrigin, type ServerProfile } from '../shared/servers';
 import { type Conversation, type FileEntry, type FileLocation, type Job, type Provider, type ServerStatus } from '../shared/protocol';
 
 type Tab = 'work' | 'jobs' | 'files' | 'terminal';
@@ -35,9 +35,9 @@ export function App() {
   }, []);
   const profileKey = JSON.stringify(store.profiles.map(({ origin, name }) => ({ origin, name })));
   useEffect(() => { if (isNative) void nativeNotices.syncServers({ servers: JSON.parse(profileKey) }).catch(() => {}); }, [profileKey]);
-  return <><Workspace key={store.active.id + store.active.origin} profile={store.active} profiles={store.profiles} target={target} clearTarget={() => setTarget(undefined)} manageServers={() => setServers(true)}/>{servers && <Servers store={store} close={() => setServers(false)}/>}</>;
+  return <><Workspace key={store.active.id + store.active.origin} profile={store.active} profiles={store.profiles} target={target} clearTarget={() => setTarget(undefined)} manageServers={() => setServers(true)} saveProfile={store.save}/>{servers && <Servers store={store} close={() => setServers(false)}/>}</>;
 }
-function Workspace({ profile, profiles, target, clearTarget, manageServers }: { profile: ServerProfile; profiles: ServerProfile[]; target?: NoticeTarget; clearTarget: () => void; manageServers: () => void }) {
+function Workspace({ profile, profiles, target, clearTarget, manageServers, saveProfile }: { profile: ServerProfile; profiles: ServerProfile[]; target?: NoticeTarget; clearTarget: () => void; manageServers: () => void; saveProfile: (profile: ServerProfile) => void }) {
   const [terminalVisited, setTerminalVisited] = useState(false);
   const [sessionActions, setSessionActions] = useState<Conversation>();
   const [agentConfig, setAgentConfig] = useState<Provider>();
@@ -107,7 +107,7 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers }: { 
   }, [authenticated, targetId]);
   function terminal(value: FileLocation) { setCwd(value); setTab('terminal'); }
   if (restoring) return <div className="launch"><img src="/brand.svg" alt={productName}/><span>正在连接工作台…</span></div>;
-  if (!authenticated) return <Login profile={profile} manageServers={manageServers} done={() => setAuthenticated(true)}/>;
+  if (!authenticated) return <Login profile={profile} manageServers={manageServers} saveProfile={saveProfile} done={() => setAuthenticated(true)}/>;
   return <FileRootsProvider><div className={"app-shell" + (current && tab === "work" ? " has-chat" : "")}>
     <aside className="desktop-rail"><a className="wordmark" href="#" onClick={e => { e.preventDefault(); setCurrent(undefined); setTab('work'); }}><img src="/brand.svg" alt=""/><span>{productName}<small>{productNameZh}</small></span></a><div className="rail-label">你的工作空间</div><nav>{tabs.map(t => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}><t.icon size={20}/>{t.label}{t.id === 'jobs' && jobs.some(j => j.status === 'running') && <span className="dot green"/>}</button>)}</nav><div className="rail-project"><span className="eyebrow">CURRENT PROJECT</span><h3>远程工作区</h3><p>项目与任务，随处接续。</p><span><GitBranch size={13}/> 服务器工作区</span></div><button className="rail-settings" onClick={() => setSettings(true)}><Settings2 size={19}/>工作台设置</button></aside>
     <main className={'main-content ' + (current && tab === 'work' ? 'chat-main' : '')}>
@@ -150,15 +150,22 @@ function projectGroups(items: Conversation[]) {
   return [...groups.values()];
 }
 function CodeMark() { return <span className="code-mark">{'⌘'}</span>; }
-function Login({ done, profile, manageServers }: { done: () => void; profile: ServerProfile; manageServers: () => void }) {
-  const address = profile.origin; const [username, setUsername] = useState(profile.username), [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  useEffect(() => { setUsername(profile.username); setPassword(''); }, [profile.username]);
+function Login({ done, profile, manageServers, saveProfile }: { done: () => void; profile: ServerProfile; manageServers: () => void; saveProfile: (profile: ServerProfile) => void }) {
+  const [address, setAddress] = useState(profile.origin), [username, setUsername] = useState(profile.username), [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  useEffect(() => { setAddress(profile.origin); setUsername(profile.username); setPassword(''); }, [profile.origin, profile.username]);
   async function login(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setError('');
-    try { setOrigin(address); const result = await post<{ token: string }>('/api/login', { username, password }); await saveToken(result.token, address); setPassword(''); if (origin === address) done(); }
-    catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+    try {
+      const target = normalizeOrigin(address); setOrigin(target);
+      const result = await post<{ token: string }>('/api/login', { username: username.trim(), password });
+      await saveToken(result.token, target); setPassword('');
+      // 登录成功才把改动的地址写回当前服务器；保存会让工作台重新挂载并读取该地址的令牌。
+      if (target !== profile.origin || username.trim() !== profile.username) saveProfile({ ...profile, origin: target, username: username.trim() });
+      if (origin === target) done();
+    }
+    catch(e) { setOrigin(profile.origin); setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
-  return <div className="login-page"><div className="login-brand"><img src="/brand.svg" alt={`${productName} 标识`}/><strong>{productName}<span>{productNameZh}</span></strong></div><div className="login-card"><span className="eyebrow">YOUR WORKSPACE, ANYWHERE.</span><h1>工作不必等。<br/><span>工作台，随身带。</span></h1><p className="muted">连接你的服务器，继续手头的工作。</p><button className="login-server-button" onClick={manageServers}><Server size={17}/>{profile.name}<ChevronDown size={16}/></button><form onSubmit={e => void login(e)}><label className="field">服务器地址<div className="input-icon"><Server size={17}/><input type="url" autoCapitalize="none" autoCorrect="off" value={address} readOnly required/></div></label><label className="field">工作台账号<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required/></label><label className="field">密码<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入工作台密码" required/></label>{error && <div className="error-banner" role="alert">{error}</div>}<button className="primary full" disabled={busy}>{busy ? <LoaderCircle size={18} className="spin"/> : <ArrowRight size={18}/>} {busy ? '正在连接…' : '进入工作台'}</button></form><div className="login-security"><ShieldCheck size={14}/>加密连接 · 每台服务器独立登录</div></div><footer>AI、终端与文件，随时掌握。</footer></div>;
+  return <div className="login-page"><div className="login-brand"><img src="/brand.svg" alt={`${productName} 标识`}/><strong>{productName}<span>{productNameZh}</span></strong></div><div className="login-card"><span className="eyebrow">YOUR WORKSPACE, ANYWHERE.</span><h1>工作不必等。<br/><span>工作台，随身带。</span></h1><p className="muted">连接你的服务器，继续手头的工作。</p><button className="login-server-button" onClick={manageServers}><Server size={17}/>{profile.name}<ChevronDown size={16}/></button><form onSubmit={e => void login(e)}><label className="field">服务器地址<div className="input-icon"><Server size={17}/><input type="url" autoCapitalize="none" autoCorrect="off" value={address} onChange={e => setAddress(e.target.value)} placeholder="https://你的服务器地址" required/></div></label><label className="field">工作台账号<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required/></label><label className="field">密码<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入工作台密码" required/></label>{error && <div className="error-banner" role="alert">{error}</div>}<button className="primary full" disabled={busy}>{busy ? <LoaderCircle size={18} className="spin"/> : <ArrowRight size={18}/>} {busy ? '正在连接…' : '进入工作台'}</button></form><div className="login-security"><ShieldCheck size={14}/>加密连接 · 每台服务器独立登录</div></div><footer>AI、终端与文件，随时掌握。</footer></div>;
 }
 function JobsPage({ jobs, refresh, toast, openOutputs, target, clearTarget }: { target?: string; clearTarget: () => void; jobs: Job[]; refresh: () => Promise<void>; toast: (s: string) => void; openOutputs: () => void }) {
   const { roots } = useFileModules();

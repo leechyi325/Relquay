@@ -22,6 +22,7 @@ import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
 import { appVersion } from '../shared/config.ts';
 import { UsageStore, ClaudeQuota, claudeTranscriptTotals } from './usage.ts';
+import { QuotaRefresher, quotaRefreshSchema, claudeSender } from './quota-refresh.ts';
 import { NotificationStore } from './notifications.ts';
 import { CloudObserver } from './cloud-observer.ts';
 import { claudeTokens } from '../shared/usage.ts';
@@ -30,7 +31,7 @@ import { TerminalNegotiation } from './terminal.ts';
 import { cloudConversation, conversationId, conversationRename } from './conversations.ts';
 
 const exec = promisify(execFile);
-type Config = { base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions };
+type Config = { claudeCommand?: string; base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions };
 type LoginSession = { token: string; cloudToken: string; username: string; expires: number };
 const readBearer = (req: Request) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
 const readCookie = (req: Request) => /(?:^|;\s*)studio=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
@@ -38,6 +39,8 @@ export function createStudio(config: Config) {
   mkdirSync(config.state, { recursive: true, mode: 0o700 });
   const agentConfigs = config.agentConfigs ?? new AgentConfigs();
   const notices = new NotificationStore(config.state), usage = new UsageStore(config.state), claudeQuota = config.claudeQuota ?? new ClaudeQuota();
+  const quotaRefresh = new QuotaRefresher(config.state, () => claudeQuota.read(), claudeSender(config.claudeCommand));
+  quotaRefresh.start();
   const modules = new FileModules(config.base, config.state, config.allowedDirectories);
   const extensions = config.extensions ?? new Extensions(config.state, agentConfigs, input => modules.directory(input));
   const files = new Files(config.base, id => modules.root(id)), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile, job => notices.job(job));
@@ -139,6 +142,9 @@ export function createStudio(config: Config) {
   });
   app.get('/api/me', (_req, res) => res.json({ username: res.locals.session.username }));
   app.get('/api/usage/accounts', asyncRoute(async (_req, res) => res.json({ accounts: await Promise.all([codex.accountUsage(), claudeQuota.read()]) })));
+  app.get('/api/usage/refresh', (_req, res) => { res.set('Cache-Control', 'no-store'); res.json(quotaRefresh.get()); });
+  app.put('/api/usage/refresh', (req, res, next) => { try { res.json(quotaRefresh.set(quotaRefreshSchema.parse(req.body))); } catch (e) { next(e); } });
+  app.post('/api/usage/refresh/run', asyncRoute(async (_req, res) => { const state = await quotaRefresh.trigger('手动发送'); claudeQuota.invalidate(); res.json(state); }));
   app.get('/api/usage/sessions', asyncRoute(async (req, res) => {
     const query = z.object({ provider: z.enum(['claude', 'codex']).optional(), search: z.string().max(200).default(''), offset: z.coerce.number().int().min(0).max(10000).default(0), limit: z.coerce.number().int().min(1).max(100).default(50) }).parse(req.query);
     let known: Conversation[] = [], warning: string | undefined;
@@ -146,7 +152,12 @@ export function createStudio(config: Config) {
     catch { warning = '暂未同步会话名称，已保留本服务器报告的统计'; }
     const search = query.search.trim().toLocaleLowerCase();
     const rows = usage.sessions(recentConversations(known), id => codex.resolveId(id)).filter(row => (!query.provider || row.provider === query.provider) && (!search || [row.title, row.projectName, row.sessionId].some(value => value.toLocaleLowerCase().includes(search))));
-    res.set('Cache-Control', 'no-store'); res.json({ items: rows.slice(query.offset, query.offset + query.limit), total: rows.length, hasMore: rows.length > query.offset + query.limit, warning });
+    const items = await Promise.all(rows.slice(query.offset, query.offset + query.limit).map(async row => {
+      if (row.provider !== 'claude') return row;
+      const totals = await claudeTranscriptTotals(row.sessionId).catch(() => null);
+      return totals ? { ...row, cumulativeTokens: totals.inputTokens + totals.outputTokens + totals.cacheReadTokens + totals.cacheWriteTokens } : row;
+    }));
+    res.set('Cache-Control', 'no-store'); res.json({ items, total: rows.length, hasMore: rows.length > query.offset + query.limit, warning });
   }));
   app.get('/api/usage/sessions/:id', asyncRoute(async (req, res) => {
     const id = codex.resolveId(conversationId.parse(req.params.id));
@@ -485,5 +496,5 @@ export function createStudio(config: Config) {
     } catch { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); }
   });
   setTimeout(() => { void jobs.pump(); observer.start(); }, 0).unref();
-  return { app, server, jobs, files, codex, notices, usage, drafts, markUsed, close: () => { observer.close(); codex.close(); jobs.stop(); wss.clients.forEach(c => c.close()); wss.close(); server.close(); } };
+  return { app, server, jobs, files, codex, notices, usage, drafts, markUsed, close: () => { quotaRefresh.stop(); observer.close(); codex.close(); jobs.stop(); wss.clients.forEach(c => c.close()); wss.close(); server.close(); } };
 }

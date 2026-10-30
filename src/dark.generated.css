@@ -133,6 +133,8 @@ html[data-theme=dark] .session-usage-disclosure{background:#1a170b}
 html[data-theme=dark] .usage-provider-tabs button.selected{background:#1a1d17;color:#b7c8ba}
 html[data-theme=dark] .usage-session-list>button.selected{background:#181b15}
 html[data-theme=dark] .bg-stop{border:1px solid #4a322e;color:#c48e86;background:#121212}
+html[data-theme=dark] .quota-refresh .refresh-times button,html[data-theme=dark] .quota-refresh .toggle-pill{border:1px solid var(--line,#343434)}
+html[data-theme=dark] .quota-refresh .refresh-times input{border:1px solid var(--line,#343434)}
 html[data-theme=dark] .directory-button{border:1px solid #34382e;background:#1a170b}
 html[data-theme=dark] .directory-list>button{border-bottom:1px solid #31312b}
 html[data-theme=dark] .conversation-list .conversation-row{border-bottom:1px solid #31312b}

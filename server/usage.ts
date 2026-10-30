@@ -50,6 +50,7 @@ export class UsageStore {
 export class ClaudeQuota {
   private cache?: AccountUsage; private expires = 0; private loading?: Promise<AccountUsage>;
   constructor(private file = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), '.credentials.json'), private fetcher: typeof fetch = fetch) {}
+  invalidate() { this.expires = 0; }
   async read(): Promise<AccountUsage> {
     if (this.cache && Date.now() < this.expires) return this.cache;
     if (this.loading) return this.loading;

@@ -42,5 +42,5 @@ export function claudeAccount(value: unknown): AccountUsage {
   return { provider: 'claude', status: windows.length ? 'available' : 'unavailable', source: 'Claude OAuth usage', updatedAt: new Date().toISOString(), windows, reason: windows.length ? undefined : '当前登录方式未提供账号额度窗口' };
 }
 
-export type SessionUsage = { sessionId: string; provider: 'claude' | 'codex'; title: string; projectName: string; snapshot: TokenSnapshot | null };
+export type SessionUsage = { sessionId: string; provider: 'claude' | 'codex'; title: string; projectName: string; snapshot: TokenSnapshot | null; cumulativeTokens?: number };
 export type SessionUsagePage = { items: SessionUsage[]; total: number; hasMore: boolean; warning?: string };

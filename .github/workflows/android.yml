@@ -38,9 +38,19 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
       - run: npm ci
+      # 固定签名密钥放在仓库 Secrets（RELQUAY_KEYSTORE_B64 / RELQUAY_KEYSTORE_PASSWORD），没配置时回退到临时 debug 签名。
+      - name: Restore signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.RELQUAY_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/relquay.jks"
+            echo "RELQUAY_KEYSTORE=$RUNNER_TEMP/relquay.jks" >> "$GITHUB_ENV"
+          fi
       - name: Build debug APK
         env:
           VITE_STUDIO_ORIGIN: ${{ inputs.origin }}
+          RELQUAY_KEYSTORE_PASSWORD: ${{ secrets.RELQUAY_KEYSTORE_PASSWORD }}
         run: |
           # ${{ env.* }} 读不到 runner 自带的环境变量，这里在 shell 里取。
           export STUDIO_JAVA_HOME="$JAVA_HOME" STUDIO_ANDROID_SDK="$ANDROID_HOME"
