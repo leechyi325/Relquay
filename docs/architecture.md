@@ -1,6 +1,6 @@
 # 架构与合同
 
-适用版本：**0.4.6**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
+适用版本：**0.4.7**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
 
 ## 范围与数据流
 

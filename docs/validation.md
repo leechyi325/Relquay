@@ -2,6 +2,13 @@
 
 [返回首页](../README.md) · [架构合同](architecture.md) · [部署维护](deployment.md)
 
+## 0.4.7 定时刷新额度与固定签名 · 2026-10-30
+
+- 提交 `8d4242b`，标签 `v0.4.7`（versionCode 14）。`tsc` 无报错，`npm test` 56/56 通过，`npm run build` 通过；新增 `tests/quota-refresh.test.ts` 覆盖定时点、窗口结束触发、最小间隔、失败记录与设置持久化。
+- 服务端已同步到部署目录并重启，`/api/health` 返回 200。`claude -p 你好 --model haiku --no-session-persistence` 在服务器上实测可用（约 4 秒）。本机真实会话的累计统计可正常读出。
+- GitHub Actions 首次构建失败：`KeytoolException … toDerInputStream rejects tag type 97`，原因是手工粘贴的 `RELQUAY_KEYSTORE_B64` 无效；用 `gh secret set` 从原文件重写后重跑成功（1 分 37 秒，含此前未编译过的 `StudioThemePlugin.java`）。产物 `relquay-0.4.7-debug.apk`，SHA-256 `ae7f3183fd14342f5f2cff59ab7997858b8acad364212d17e1818a7061726ba7`。
+- 尚未完成：真机安装验收（外观、文件修改时间、登录页地址编辑、额度面板定时卡片、会话累计显示）；APK 是否使用固定密钥的证书比对。
+
 ## 0.4.6 公开仓库交付 · 2026-10-28
 
 - 品牌更名、介绍视频、Android 图标修正及 README 文案已提交并推送至 `leechyi325/Relquay` 的 `main`。源码推送与服务器程序升级分别进行；本轮没有升级服务端程序。

@@ -35,14 +35,14 @@ npm run build
 npm run server:package
 ```
 
-生成 `artifacts/relquay-server-0.4.6.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
+生成 `artifacts/relquay-server-0.4.7.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
 
 收到包与校验文件后，在两者所在目录执行：
 
 ```bash
-sha256sum -c relquay-server-0.4.6.tar.gz.sha256
+sha256sum -c relquay-server-0.4.7.tar.gz.sha256
 mkdir -p "$HOME/relquay/app"
-tar -xzf relquay-server-0.4.6.tar.gz --strip-components=1 -C "$HOME/relquay/app"
+tar -xzf relquay-server-0.4.7.tar.gz --strip-components=1 -C "$HOME/relquay/app"
 cd "$HOME/relquay/app"
 npm ci --include=dev
 npm ci --prefix upstream
@@ -109,7 +109,7 @@ curl -f http://127.0.0.1:3080/api/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/api/files
 ```
 
-应分别得到健康 JSON（0.4.6）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
+应分别得到健康 JSON（0.4.7）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
 
 ## 5. 配置 HTTPS 与后台常驻
 

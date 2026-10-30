@@ -75,7 +75,7 @@ https://github.com/user-attachments/assets/f049a6e0-826f-4ae6-9f05-81e6abdf6efc
 
 项目与 GitHub 仓库均已更名为 **Relquay · 云渡**。已有实例升级时保留原数据目录与服务名；本地仓库可运行 `git remote set-url origin https://github.com/leechyi325/Relquay.git` 更新远程地址。
 
-当前源码版本 **0.4.6**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
+当前源码版本 **0.4.7**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
 
 ### 第一步：准备环境
 
@@ -146,14 +146,14 @@ npm run build
 npm run server:package
 ```
 
-生成 `artifacts/relquay-server-0.4.6.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
+生成 `artifacts/relquay-server-0.4.7.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
 
 收到包与校验文件后，在两者所在目录执行：
 
 ```bash
-sha256sum -c relquay-server-0.4.6.tar.gz.sha256
+sha256sum -c relquay-server-0.4.7.tar.gz.sha256
 mkdir -p "$HOME/relquay/app"
-tar -xzf relquay-server-0.4.6.tar.gz --strip-components=1 -C "$HOME/relquay/app"
+tar -xzf relquay-server-0.4.7.tar.gz --strip-components=1 -C "$HOME/relquay/app"
 cd "$HOME/relquay/app"
 npm ci --include=dev
 npm ci --prefix upstream
@@ -220,7 +220,7 @@ curl -f http://127.0.0.1:3080/api/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/api/files
 ```
 
-应分别得到健康 JSON（0.4.6）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
+应分别得到健康 JSON（0.4.7）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
 
 #### 5. 配置 HTTPS 与后台常驻
 
@@ -323,16 +323,17 @@ docs/      安装、使用、配置和维护说明（media/ 为首页演示成�
 ## 更新记录
 
 <details>
-<summary>展开版本历史（当前 0.4.6）</summary>
+<summary>展开版本历史（当前 0.4.7）</summary>
 
 
-按版本倒序记录源码变化；部署状态见验证文档。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.6。
+按版本倒序记录源码变化；部署状态见验证文档。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.7。
 
-### 未发布
+### 0.4.7 · 2026-10-30
 
 - 新增定时刷新 Claude 额度：每天固定时刻和/或 5 小时窗口结束后，服务器用 `claude -p` 发送「你好」，在「额度与 Token」中配置（`/api/usage/refresh`）。
 - 登录页服务器地址可直接编辑，登录成功后写回当前服务器条目。
 - 会话 Token 列表的数字改为 Claude 会话累计（此前显示上下文占用）。
+- Android versionCode 14。CI 改用固定签名密钥（仓库 Secrets `RELQUAY_KEYSTORE_B64` / `RELQUAY_KEYSTORE_PASSWORD`），此前每次构建的临时 debug 签名都不同，无法覆盖安装。**首次安装此版本需先卸载旧 App**（会清除本机服务器列表和登录状态），之后可直接覆盖更新。
 - 设置新增「外观」：跟随系统 / 浅色 / 深色；深色样式由 `scripts/make-dark.mjs` 从浅色样式生成，Android 状态栏与导航栏图标随主题切换。
 - 文件列表、预览页与会话列表显示修改时分（跨年显示完整日期）。
 - Claude 会话 Token 新增从会话记录统计的累计值（新输入/输出/缓存读写/调用次数）与上下文占用百分比；新一轮的全 0 上报不再覆盖已有快照。

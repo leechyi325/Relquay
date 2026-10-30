@@ -1,6 +1,6 @@
 # 代理配置与扩展
 
-适用版本：**0.4.6**。[返回首页](../README.md) · [使用指南](user-guide.md) · [部署维护](deployment.md)
+适用版本：**0.4.7**。[返回首页](../README.md) · [使用指南](user-guide.md) · [部署维护](deployment.md)
 
 从 Claude Code / Codex 卡片旁的小设置按钮进入「配置 / Skills / MCP / 插件」。这些操作作用于当前服务器运行用户，对同一用户下的项目通用；当前没有项目级覆盖关系管理。
 
