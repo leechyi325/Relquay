@@ -57,7 +57,7 @@ jobs:
           chmod +x android/gradlew
           [ -n "$VITE_STUDIO_ORIGIN" ] || unset VITE_STUDIO_ORIGIN
           bash scripts/build-android.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: relquay-debug-apk
           path: artifacts/relquay-*-debug.apk
