@@ -2,7 +2,7 @@
   "name": "runtime",
   "private": true,
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.310",
+    "@anthropic-ai/claude-code": "2.1.312",
     "@cloudcli-ai/cloudcli": "1.37.5",
     "@openai/codex": "0.164.0"
   }
