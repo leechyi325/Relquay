@@ -13,7 +13,7 @@ import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import { conversationCreateSchema, fileModuleSchema, locationSchema, type Conversation } from '../shared/protocol.ts';
 import { FileModules } from './modules.ts';
 import { Attachments, withFileReferences } from './attachments.ts';
-import { cloudModels, validateModel } from './models.ts';
+import { claudeAliases, cloudModels, validateModel } from './models.ts';
 import { Files, HttpError, streamFile } from './files.ts';
 import { Extensions } from './extensions.ts';
 import { providerSchema, extensionName, mcpWriteSchema, skillWriteSchema, pluginIdSchema, docKindSchema, docWriteSchema } from '../shared/extensions.ts';
@@ -208,7 +208,7 @@ export function createStudio(config: Config) {
   }));
   app.get('/api/agents/:provider/models', asyncRoute(async (req, res) => {
     const provider = z.enum(['claude', 'codex']).parse(req.params.provider);
-    res.json({ models: provider === 'codex' ? await codex.models() : cloudModels((await cloud('/providers/claude/models', res.locals.session.cloudToken)).data) });
+    res.json({ models: provider === 'codex' ? await codex.models() : cloudModels((await cloud('/providers/claude/models', res.locals.session.cloudToken)).data, await claudeAliases(config.claudeCommand)) });
   }));
   app.post('/api/conversations', asyncRoute(async (req, res) => {
     const body = conversationCreateSchema.parse(req.body), token = res.locals.session.cloudToken;
@@ -457,7 +457,7 @@ export function createStudio(config: Config) {
                   if (codex.has(body.sessionId)) { await codex.send(body.sessionId, body.content, body.options, resolved); return; }
                   const session = await cloud('/providers/sessions/' + body.sessionId, ticket.session.cloudToken);
                   if (session.data.provider !== 'claude') throw new HttpError(400, '该会话类型暂不支持，请在终端继续');
-                  const models = cloudModels((await cloud('/providers/claude/models', ticket.session.cloudToken)).data);
+                  const models = cloudModels((await cloud('/providers/claude/models', ticket.session.cloudToken)).data, await claudeAliases(config.claudeCommand));
                   const selected = validateModel(models, body.options.model, body.options.effort);
                   const images = await attachments.claudeImages(resolved);
                   notices.begin(body.sessionId); observer.begin(body.sessionId);

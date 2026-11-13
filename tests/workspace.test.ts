@@ -9,7 +9,7 @@ import { fixture, until } from './helpers.ts';
 import { FileModules } from '../server/modules.ts';
 import { loadServers, normalizeOrigin, persistServers } from '../shared/servers.ts';
 import { interactionQuestions, interactionResponse } from '../shared/interactions.ts';
-import { cloudModels, validateModel } from '../server/models.ts';
+import { cloudModels, latestClaudeIds, validateModel } from '../server/models.ts';
 import { CodexBridge } from '../server/codex.ts';
 
 test('server catalog migrates the legacy origin, keeps active selection, and rejects credential URLs/duplicates', () => {
@@ -75,6 +75,13 @@ test('models and interaction forms retain supported effort, selections and exact
   assert.equal(interactionQuestions(claude)[0].multiple, true); assert.deepEqual(interactionResponse(claude, { '0': ['A', 'B'] }), { updatedInput: { ...claude.input, answers: { '做什么？': 'A, B' } } });
   const codex = { kind: 'permission_request', interaction: 'questions', input: { questions: [{ id: 'q', question: '请输入', isSecret: true }] } };
   assert.equal(interactionQuestions(codex)[0].secret, true); assert.deepEqual(interactionResponse(codex, { q: ['回答'] }), { answers: { q: { answers: ['回答'] } } }); assert.throws(() => interactionResponse(codex, {}));
+});
+test('Claude aliases resolve to the newest model ID shipped in the installed CLI', () => {
+  const aliases = latestClaudeIds(['claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-4-8', 'claude-opus-5-5', 'claude-sonnet-4-20250514', 'noise']);
+  assert.deepEqual(aliases.fable, { name: 'Fable 5.2', id: 'claude-fable-5-2' });
+  assert.equal(aliases.opus.id, 'claude-opus-5-5'); assert.equal(aliases.sonnet, undefined);
+  const models = cloudModels({ models: { DEFAULT: 'fable', OPTIONS: [{ value: 'fable', label: 'Fable 5' }, { value: 'opus[1m]', label: 'Opus (1M context)' }] } }, aliases);
+  assert.equal(models[0].name, 'Fable 5.2'); assert.equal(models[1].name, 'Opus 5.5 · 1M 上下文'); assert.match(models[1].description ?? '', /^claude-opus-5-5\[1m\]/);
 });
 test('Codex model/effort/image inputs and user question reply survive replay without auto approval', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roamdeck-codex-')), trace = path.join(dir, 'rpc.jsonl');

@@ -37,3 +37,21 @@ test('Codex stdio handshake, explicit approval/decline, durable history and resu
   assert.equal(deleted.has('session-one'), false); deleted.close();
   restored.close();
 });
+
+test('Codex /compact uses the native compaction request and refuses an empty thread', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cv-codex-compact-')), log = path.join(dir, 'frames.jsonl');
+  const bridge = new CodexBridge(dir, process.execPath, [path.resolve('tests/codex-fixture.mjs'), log]);
+  t.after(async () => { bridge.close(); await new Promise(r => setTimeout(r, 30)); await fs.rm(dir, { recursive: true, force: true }); });
+  bridge.register('compact-one', dir);
+  await assert.rejects(bridge.send('compact-one', '/compact'), /无需压缩/);
+  await bridge.send('compact-one', '检查命令');
+  await until(() => bridge.approvals.size === 1);
+  bridge.approve(String([...bridge.approvals.values()][0].event.requestId), true);
+  await until(() => !bridge.sessions.get('compact-one')!.processing);
+  await bridge.send('compact-one', '/compact');
+  await until(() => !bridge.sessions.get('compact-one')!.processing);
+  const methods = (await fs.readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line).method);
+  assert.equal(methods.filter(method => method === 'thread/compact/start').length, 1);
+  assert.equal(methods.filter(method => method === 'turn/start').length, 1);
+  assert.ok(bridge.history('compact-one').messages.some(e => e.kind === 'tool_use' && e.toolName === 'contextCompaction'));
+});

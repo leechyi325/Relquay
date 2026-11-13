@@ -75,7 +75,7 @@ https://github.com/user-attachments/assets/f049a6e0-826f-4ae6-9f05-81e6abdf6efc
 
 项目与 GitHub 仓库均已更名为 **Relquay · 云渡**。已有实例升级时保留原数据目录与服务名；本地仓库可运行 `git remote set-url origin https://github.com/leechyi325/Relquay.git` 更新远程地址。
 
-当前源码版本 **0.4.7**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
+当前源码版本 **0.4.8**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
 
 ### 第一步：准备环境
 
@@ -146,14 +146,14 @@ npm run build
 npm run server:package
 ```
 
-生成 `artifacts/relquay-server-0.4.7.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
+生成 `artifacts/relquay-server-0.4.8.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
 
 收到包与校验文件后，在两者所在目录执行：
 
 ```bash
-sha256sum -c relquay-server-0.4.7.tar.gz.sha256
+sha256sum -c relquay-server-0.4.8.tar.gz.sha256
 mkdir -p "$HOME/relquay/app"
-tar -xzf relquay-server-0.4.7.tar.gz --strip-components=1 -C "$HOME/relquay/app"
+tar -xzf relquay-server-0.4.8.tar.gz --strip-components=1 -C "$HOME/relquay/app"
 cd "$HOME/relquay/app"
 npm ci --include=dev
 npm ci --prefix upstream
@@ -220,7 +220,7 @@ curl -f http://127.0.0.1:3080/api/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/api/files
 ```
 
-应分别得到健康 JSON（0.4.7）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
+应分别得到健康 JSON（0.4.8）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
 
 #### 5. 配置 HTTPS 与后台常驻
 
@@ -323,10 +323,17 @@ docs/      安装、使用、配置和维护说明（media/ 为首页演示成�
 ## 更新记录
 
 <details>
-<summary>展开版本历史（当前 0.4.7）</summary>
+<summary>展开版本历史（当前 0.4.8）</summary>
 
 
-按版本倒序记录源码变化；部署状态见验证文档。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.7。
+按版本倒序记录源码变化；部署状态见验证文档。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.8。
+
+### 0.4.8 · 2026-11-13
+
+- 对话新增快速命令：输入框下方「/」按钮和键入 `/` 的提示里加入内置命令（Claude Code：`/compact`、`/context`、`/cost`、`/init`、`/code-review`、`/security-review`；Codex：`/compact`，调用 App Server 的 `thread/compact/start`）。
+- 模型列表中 Claude 别名对应的具体型号改为从服务器上安装的 Claude Code 读取，不再写死；上游升级到 Claude Code 2.1.323（Fable 5.2）与 CloudCLI 1.37.8。
+- Android versionCode 15，与 0.4.7 同一签名，可直接覆盖安装。
+- Relquay 使用的 Claude Code 每周自动更新：`relquay-claude-update.timer` 运行 `scripts/update-claude.ts`，下载新版后先用 CloudCLI 的 Agent SDK 跑一轮测试对话，通过才切换，失败自动保持原版本并记录，支持 `--rollback`；锁定版本只作兜底（见部署文档）。
 
 ### 0.4.7 · 2026-10-30
 

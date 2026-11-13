@@ -31,5 +31,12 @@ createInterface({ input: process.stdin }).on('line', line => {
     send({ method: 'item/completed', params: { threadId: 'fixture-thread', item: { id: 'question-reply', type: 'agentMessage', text: JSON.stringify(frame.result.answers) } } });
     send({ method: 'turn/completed', params: { threadId: 'fixture-thread', turn: { status: 'completed' } } });
   }
+  if (frame.method === 'thread/compact/start') {
+    send({ id: frame.id, result: {} });
+    send({ method: 'turn/started', params: { threadId: 'fixture-thread', turn: { id: 'compact-turn' } } });
+    send({ method: 'item/started', params: { threadId: 'fixture-thread', item: { id: 'compaction', type: 'contextCompaction' } } });
+    send({ method: 'item/completed', params: { threadId: 'fixture-thread', item: { id: 'compaction', type: 'contextCompaction' } } });
+    send({ method: 'turn/completed', params: { threadId: 'fixture-thread', turn: { status: 'completed' } } });
+  }
   if (frame.method === 'turn/interrupt') { send({ id: frame.id, result: {} }); send({ method: 'turn/completed', params: { threadId: 'fixture-thread', turn: { status: 'interrupted' } } }); }
 });

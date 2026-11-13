@@ -2,6 +2,14 @@
 
 [返回首页](../README.md) · [架构合同](architecture.md) · [部署维护](deployment.md)
 
+## 0.4.8 快速命令与 Claude Code 验证更新 · 2026-11-13
+
+- 测试 61/61 通过，类型检查与 Vite 构建通过。
+- 服务器上 `claude -p --resume` 实测：`/compact` 写入 compact_boundary，`/context`、`/cost` 返回文本；Codex App Server 0.164.0 实测 `thread/compact/start` 发出 turn/started → contextCompaction → turn/completed，会话不会卡在运行中。
+- Claude Code 2.1.323 内置 `claude-fable-5-2`，模型名称从实际二进制读出 Fable 5.2。
+- `scripts/update-claude.ts` 实跑：下载原生包、经 Agent SDK 0.3.310（当时部署版本）跑 Haiku 测试对话、切换软链接，约 8 秒；伪造的损坏二进制被拒绝。`relquay-claude-update.timer` 改为每周一运行。
+- 待复核：真机快速命令面板、对话内 `/compact` 后的显示、Fable 5.2 实际调用。
+
 ## 0.4.7 定时刷新额度与固定签名 · 2026-10-30
 
 - 提交 `8d4242b`，标签 `v0.4.7`（versionCode 14）。`tsc` 无报错，`npm test` 56/56 通过，`npm run build` 通过；新增 `tests/quota-refresh.test.ts` 覆盖定时点、窗口结束触发、最小间隔、失败记录与设置持久化。

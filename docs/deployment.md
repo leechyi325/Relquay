@@ -1,12 +1,21 @@
 # 自托管部署与维护
 
-适用版本：**0.4.7 / Android versionCode 14**。[返回首页](../README.md) · [使用指南](user-guide.md) · [验证记录](validation.md)
+适用版本：**0.4.8 / Android versionCode 15**。[返回首页](../README.md) · [使用指南](user-guide.md) · [验证记录](validation.md)
 
 0.4.6 产品名改为 Relquay · 云渡。已有安装保留原目录、服务名、状态与环境变量值；无需重装服务器或清除 App 数据。新安装示例使用 `relquay` 目录，新构建 APK/服务端包使用同名前缀。GitHub 仓库现为 `leechyi325/Relquay`；已有本地 clone 可更新 origin，实例路径不随仓库名自动迁移。
 
 ## 部署拓扑与前提
 
-当前部署路径经过 Ubuntu ARM64 + systemd 验证；服务器运行代理与任务，Android 打包可在另一台电脑完成。需要 Node.js ≥24、npm、tmux、构建工具、自己的域名和系统 CA 信任的 TLS 证书。上游版本由 [upstream/package.json](../upstream/package.json) 和锁文件固定：CloudCLI 1.37.5、Codex 0.164.0、Claude Code 2.1.310。
+当前部署路径经过 Ubuntu ARM64 + systemd 验证；服务器运行代理与任务，Android 打包可在另一台电脑完成。需要 Node.js ≥24、npm、tmux、构建工具、自己的域名和系统 CA 信任的 TLS 证书。上游版本由 [upstream/package.json](../upstream/package.json) 和锁文件固定：CloudCLI 1.37.8、Codex 0.164.0、Claude Code 2.1.323。模型选择里 `fable`/`opus` 等别名对应的具体型号（如 Fable 5.2）从实际使用的 Claude Code 中读取。
+
+**Claude Code 自动更新。** 锁定版本的 Claude Code 只作兜底：`env.sh` 的 PATH 最前面是 `~/relquay/claude-bin`，里面只有一个 `claude` 软链接，指向 `~/relquay/claude-versions/<版本>/claude`。systemd 定时器 `relquay-claude-update.timer` 每周一 04:30（随机延后 30 分钟内）以 `ubuntu` 用户运行 `scripts/update-claude.ts`：
+
+1. 查询 npm 上 `@anthropic-ai/claude-code` 的最新版本，与当前版本相同则结束。
+2. 用 `npm pack` 下载当前平台的原生包（按注册表 integrity 校验）到独立目录，不动正在使用的版本，也不动终端里的原生安装 `~/.local/bin/claude`。
+3. 验证：`--version` 号一致；再用**运行目录里 CloudCLI 实际使用的 Agent SDK**，以与 CloudCLI 相同的流式输入方式跑一轮 Haiku 对话（不保留会话），要求返回成功且初始化信息里有 `/compact`。
+4. 通过才原子切换软链接，保留最近 3 个版本；新会话和模型名称自动用上新版本，CloudCLI 与网关都不需要重启，正在运行的会话不受影响。未通过则继续用原版本，删掉候选版本，并把原因记入 `state/claude-update.json` 的 `rejected`，之后不再重复尝试该版本（等 Claude Code 出下一个版本，或升级 CloudCLI 后用 `--force` 重试）。
+
+手动检查：`sudo systemctl start relquay-claude-update.service`，日志用 `journalctl -u relquay-claude-update`，结果在 `state/claude-update.json`。验证测不到的问题（例如审批交互的细节变化）出现后，回退到上一版本：`source ~/relquay/env.sh && cd "$RELQUAY_APP" && ./node_modules/.bin/tsx scripts/update-claude.ts --rollback`，被回退的版本同样记入 `rejected`。`claude-bin/claude` 软链接缺失时自动回退到 `upstream` 锁定版本。
 
 ```text
 手机 / 浏览器 → HTTPS :28443 → Caddy
@@ -188,13 +197,13 @@ VITE_STUDIO_ORIGIN=https://workspace.example.com:28443 npm run android:build
 
 脚本执行构建、Capacitor 同步和 `assembleDebug`，输出 `artifacts/relquay-<版本>-debug.apk`，并验证签名和 SHA-256。`VITE_STUDIO_ORIGIN` 仅设置新安装的初始入口，已保存的服务器优先。APK 和生成的 Android assets 不提交 Git。
 
-0.4.7 使用 versionCode 14，包名继续为 `xyz.leechyi.compileverse`。升级需同包名同签名以保留 Keystore、服务器列表和提醒状态；备份签名材料并验证覆盖安装。当前交付是 debug APK，正式签名与商店发布另行配置。
+0.4.8 使用 versionCode 15，包名继续为 `xyz.leechyi.compileverse`。升级需同包名同签名以保留 Keystore、服务器列表和提醒状态；备份签名材料并验证覆盖安装。当前交付是 debug APK，正式签名与商店发布另行配置。
 
 **CI 签名。** GitHub Actions 构建（`v*` 标签或手动运行）从仓库 Secrets 读取固定密钥：`RELQUAY_KEYSTORE_B64`（密钥库文件的 base64，用 `base64 -w0` 生成，不要手工复制）和 `RELQUAY_KEYSTORE_PASSWORD`；密钥别名为 `relquay`，可用 `RELQUAY_KEY_ALIAS` 覆盖。`android/app/build.gradle` 仅在设置了环境变量 `RELQUAY_KEYSTORE` 时用它签 debug 包，否则回退到本机默认 debug 签名。密钥库不进 Git，需单独备份（当前保存在构建服务器 `~/.relquay-signing/`）；丢失后新包无法覆盖安装。0.4.7 之前的包用的是各次构建的临时签名，所以升级到 0.4.7 需先卸载一次。通知采用用户主动开启的 `specialUse` 前台服务，商店分发仍需按相应审核要求申报。
 
 ## 升级后的重点复核
 
-- 前后端和 Android 版本匹配；0.4.7 新增定时刷新 Claude 额度（默认关闭，状态保存在 `state/quota-refresh.json`），0.4.6 新增按会话统计与配置字段引导，旧 UI 不会因服务端升级自动替换。
+- 前后端和 Android 版本匹配；0.4.8 新增对话快速命令（需新版 APK），Claude Code 改由 `relquay-claude-update.timer` 验证后更新（运行目录需有 `claude-bin`、`claude-versions` 并更新 `env.sh` 的 PATH）；0.4.7 新增定时刷新 Claude 额度（默认关闭，状态保存在 `state/quota-refresh.json`），0.4.6 新增按会话统计与配置字段引导，旧 UI 不会因服务端升级自动替换。
 - 保留账号、模块、会话、Token 快照、通知游标和停用 MCP 暂存；旧会话没有用量快照时显示未知，不需要重建会话或重新授权全部账号。
 - 0.4.2 的终端协商主要在网关修复，旧 0.4.1 客户端也受益，升级后重连；0.4.4 的原生频道诊断和通知恢复需要安装新版 APK。
 - 新版配置保存栏随页面滚动；个人手机上复核输入法。布局验收使用临时 fixture，不向正式 AI 配置写测试密钥。
