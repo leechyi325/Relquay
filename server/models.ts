@@ -16,7 +16,7 @@ export const fallbackAliases: Resolved = {
 export function latestClaudeIds(ids: string[]): Resolved {
   const best: Record<string, [number, number]> = {}, out: Resolved = {};
   for (const id of ids) {
-    const match = /^claude-(fable|opus|sonnet|haiku)-(\d)-(\d)$/.exec(id); if (!match) continue;
+    const match = /^claude-(fable|opus|sonnet|haiku)-(\d)-(\d{1,2})$/.exec(id); if (!match) continue;
     const [, family, major, minor] = match, version: [number, number] = [Number(major), Number(minor)], current = best[family];
     if (!current || version[0] > current[0] || (version[0] === current[0] && version[1] > current[1])) best[family] = version;
   }
@@ -28,14 +28,20 @@ function locate(command: string) {
   for (const directory of (process.env.PATH ?? '').split(path.delimiter)) { const file = path.join(directory, command); if (fs.existsSync(file)) return file; }
 }
 let aliasCache: { key: string; data: Resolved } | undefined;
+const scanning = new Map<string, Promise<Resolved>>();
 export async function claudeAliases(command = 'claude'): Promise<Resolved> {
-  try {
-    const file = fs.realpathSync(locate(command) ?? ''), stat = fs.statSync(file), key = `${file}:${stat.mtimeMs}:${stat.size}`;
-    if (aliasCache?.key === key) return aliasCache.data;
-    const output = await new Promise<string>((resolve, reject) => execFile('grep', ['-aoE', 'claude-(fable|opus|sonnet|haiku)-[0-9]-[0-9]\\b', file], { maxBuffer: 16 << 20, timeout: 20000 }, (error, stdout) => error ? reject(error) : resolve(stdout)));
-    const data = { ...fallbackAliases, ...latestClaudeIds(output.split('\n')) };
-    aliasCache = { key, data }; return data;
-  } catch { return fallbackAliases; }
+  let key: string, file: string;
+  try { file = fs.realpathSync(locate(command) ?? ''); const stat = fs.statSync(file); key = `${file}:${stat.mtimeMs}:${stat.size}`; } catch { return fallbackAliases; }
+  if (aliasCache?.key === key) return aliasCache.data;
+  let pending = scanning.get(key);
+  if (!pending) {
+    // grep 没有匹配时退出码为 1，同样视为"读不到"；失败也记入缓存，避免每次请求都重扫一遍约 200MB 的文件
+    pending = new Promise<string>(resolve => execFile('grep', ['-aoE', 'claude-(fable|opus|sonnet|haiku)-[0-9]-[0-9]{1,2}\\b', file], { maxBuffer: 16 << 20, timeout: 20000 }, (_error, stdout) => resolve(stdout ?? '')))
+      .then(output => { const data = { ...fallbackAliases, ...latestClaudeIds(output.split('\n')) }; aliasCache = { key, data }; return data; })
+      .finally(() => scanning.delete(key));
+    scanning.set(key, pending);
+  }
+  return pending;
 }
 function resolveClaude(item: AgentModel, aliases: Resolved): AgentModel {
   const base = item.id.replace(/\[1m\]$/, ''), hit = aliases[base];

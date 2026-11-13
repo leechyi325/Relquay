@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { managedVersion, readStatus, rollbackClaude, updateClaude } from '../server/claude-updater.ts';
+import { TransientError, managedVersion, readStatus, rollbackClaude, updateClaude } from '../server/claude-updater.ts';
 
 function setup(t: { after: (fn: () => void) => void }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relquay-updater-'));
@@ -44,5 +44,16 @@ test('a link to the native install is taken over, and registry errors leave the 
   const failed = await updateClaude(paths, { latest: async () => { throw new Error('网络不可用'); }, download, smoke: async () => {} });
   assert.equal(failed.ok, false); assert.equal(fs.readlinkSync(paths.link), native);
   await updateClaude(paths, { latest: async () => '2.1.323', download, smoke: async () => {} });
+  assert.equal(managedVersion(paths), '2.1.323');
+});
+
+test('transient verification failures are not remembered, and a relative link is still recognised', async t => {
+  const paths = setup(t); fs.mkdirSync(paths.versions, { recursive: true });
+  await updateClaude(paths, { latest: async () => '2.1.323', download, smoke: async () => {} });
+  let status = await updateClaude(paths, { latest: async () => '2.1.400', download, smoke: async () => { throw new TransientError('429 rate limit'); } });
+  assert.equal(status.ok, false); assert.equal(readStatus(paths.status).rejected?.['2.1.400'], undefined);
+  status = await updateClaude(paths, { latest: async () => '2.1.400', download, smoke: async () => {} });
+  assert.equal(managedVersion(paths), '2.1.400');
+  fs.rmSync(paths.link); fs.symlinkSync(path.relative(path.dirname(paths.link), path.join(paths.versions, '2.1.323', 'claude')), paths.link);
   assert.equal(managedVersion(paths), '2.1.323');
 });

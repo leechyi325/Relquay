@@ -21,12 +21,12 @@ const permissionLabels = {
 type QuickCommand = { name: string; description: string; hint?: string; instant?: boolean };
 const builtinCommands: Record<'claude' | 'codex', QuickCommand[]> = {
   claude: [
-    { name: 'compact', description: '压缩上下文：总结之前的对话，释放上下文空间', hint: '[保留重点]', instant: true },
+    { name: 'compact', description: '压缩上下文：总结之前的对话，释放上下文空间', hint: '[保留重点]' },
     { name: 'context', description: '查看当前上下文占用', instant: true },
     { name: 'cost', description: '查看订阅额度与本机用量', instant: true },
-    { name: 'init', description: '分析项目并生成 CLAUDE.md', instant: true },
-    { name: 'code-review', description: '审查当前改动', instant: true },
-    { name: 'security-review', description: '对当前分支做安全审查', instant: true }
+    { name: 'init', description: '分析项目并生成 CLAUDE.md' },
+    { name: 'code-review', description: '审查当前改动' },
+    { name: 'security-review', description: '对当前分支做安全审查' }
   ],
   codex: [{ name: 'compact', description: '压缩上下文：总结之前的对话，释放上下文空间', instant: true }]
 };

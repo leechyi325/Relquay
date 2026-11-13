@@ -1,4 +1,4 @@
-// 由 relquay-claude-update.timer 每天运行：验证通过才切换 Relquay 使用的 Claude Code。
+// 由 relquay-claude-update.timer 每周运行：验证通过才切换 Relquay 使用的 Claude Code。
 // 用法：tsx scripts/update-claude.ts [--force] [--rollback]
 import path from 'node:path';
 import os from 'node:os';

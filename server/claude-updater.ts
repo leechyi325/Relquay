@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 export type UpdaterPaths = { versions: string; link: string; status: string };
 export type UpdaterStatus = { checkedAt?: string; current?: string; previous?: string; latest?: string; ok?: boolean; message?: string; rejected?: Record<string, string> };
+/** 网络、额度、登录等暂时性问题：不把版本记为不兼容，下次照常重试。 */
+export class TransientError extends Error {}
 export type UpdaterDeps = {
   latest: () => Promise<string>;
   download: (version: string, target: string) => Promise<void>;
@@ -21,8 +23,9 @@ function writeStatus(file: string, status: UpdaterStatus) { fs.mkdirSync(path.di
 /** 当前软链接指向的受管版本；指向原生安装或不存在时返回 undefined，下次检查会接管。 */
 export function managedVersion(paths: UpdaterPaths) {
   try {
-    const target = fs.readlinkSync(paths.link), relative = path.relative(paths.versions, path.dirname(target));
-    return relative && !relative.startsWith('..') && !path.isAbsolute(relative) && fs.existsSync(target) ? relative : undefined;
+    const target = path.resolve(path.dirname(paths.link), fs.readlinkSync(paths.link));
+    const relative = path.relative(fs.realpathSync(paths.versions), path.dirname(fs.realpathSync(target)));
+    return /^[^/\\]+$/.test(relative) && relative !== '..' ? relative : undefined;
   } catch { return undefined; }
 }
 /** 先建临时软链接再 rename，切换是原子的，正在启动的会话不会读到半成品。 */
@@ -52,9 +55,11 @@ export async function updateClaude(paths: UpdaterPaths, deps: UpdaterDeps, force
     }
     try { await deps.smoke(executable, latest); }
     catch (e) {
-      status.rejected[latest] = (e instanceof Error ? e.message : String(e)).slice(0, 300); status.ok = false;
-      status.message = `${latest} 验证失败，继续使用 ${current ?? '原有版本'}：${status.rejected[latest]}`;
-      if (current !== latest) fs.rmSync(directory, { recursive: true, force: true });
+      const reason = (e instanceof Error ? e.message : String(e)).slice(0, 300); status.ok = false;
+      const keep = [current, status.previous].includes(latest);
+      if (!keep) fs.rmSync(directory, { recursive: true, force: true });
+      if (e instanceof TransientError) { status.message = `${latest} 暂时无法验证（${reason}），下次再试，继续使用 ${current ?? '原有版本'}`; return status; }
+      status.rejected[latest] = reason; status.message = `${latest} 验证失败，继续使用 ${current ?? '原有版本'}：${reason}`;
       return status;
     }
     pointLink(paths, latest); delete status.rejected[latest];
@@ -80,11 +85,13 @@ export async function npmLatest(registry = 'https://registry.npmjs.org') {
 }
 /** 只取当前平台的原生包；npm pack 会按注册表的 integrity 校验下载内容。 */
 export async function npmDownload(version: string, target: string) {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'relquay-claude-'));
+  const temporary = fs.mkdtempSync(path.join(path.dirname(target), '.download-')); // 与目标同一文件系统，rename 不会 EXDEV
   try {
-    const name = `@anthropic-ai/claude-code-${process.platform}-${process.arch}@${version}`;
-    const { stdout } = await run('npm', ['pack', name, '--pack-destination', temporary, '--silent'], { timeout: 600000, maxBuffer: 1 << 20 });
-    await run('tar', ['xzf', path.join(temporary, stdout.trim().split('\n').at(-1)!), '-C', temporary, 'package/claude'], { timeout: 300000 });
+    const musl = process.platform === 'linux' && !(process.report.getReport() as { header?: { glibcVersionRuntime?: string } }).header?.glibcVersionRuntime;
+    const name = `@anthropic-ai/claude-code-${process.platform}-${process.arch}${musl ? '-musl' : ''}@${version}`;
+    await run('npm', ['pack', name, '--pack-destination', temporary, '--silent'], { timeout: 600000, maxBuffer: 1 << 20 });
+    const tarball = fs.readdirSync(temporary).find(file => file.endsWith('.tgz')); if (!tarball) throw new Error('npm pack 没有产出安装包');
+    await run('tar', ['xzf', path.join(temporary, tarball), '-C', temporary, 'package/claude'], { timeout: 300000 });
     fs.renameSync(path.join(temporary, 'package', 'claude'), path.join(target, 'claude'));
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 }
@@ -105,8 +112,13 @@ export function sdkSmoke(sdkEntry: string) {
         if (message.type === 'result') { result = message; finish(); break; }
       }
     } finally { clearTimeout(timer); finish(); fs.rmSync(cwd, { recursive: true, force: true }); }
-    if (!result) throw new Error('120 秒内没有完成测试对话');
-    if (result.subtype !== 'success' || result.is_error) throw new Error('测试对话失败：' + String(result.result ?? result.subtype).slice(0, 200));
+    if (!result) throw new TransientError('120 秒内没有完成测试对话');
+    if (result.subtype !== 'success' || result.is_error) {
+      const text = String(result.result ?? result.subtype).slice(0, 200);
+      // 网络、限流、登录、额度类错误与新版本本身无关
+      const message = '测试对话失败：' + text;
+      throw /\b(401|403|429|5\d\d)\b|overloaded|rate.?limit|quota|usage limit|login|credit|network|timeout|ECONN|ENOTFOUND/i.test(text) ? new TransientError(message) : new Error(message);
+    }
     if (!commands.includes('compact')) throw new Error('初始化信息里缺少 /compact');
   };
 }

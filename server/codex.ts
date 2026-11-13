@@ -149,8 +149,11 @@ export class CodexBridge {
   async send(id: string, content: string, options: Record<string, unknown> = {}, attachments: ResolvedAttachment[] = []) {
     const session = this.sessions.get(id); if (!session) throw new HttpError(404, '会话不存在');
     if (session.processing) throw new HttpError(409, '当前会话仍在运行');
-    if (/^\/compact\s*$/.test(content) && !session.threadId) throw new HttpError(400, '还没有对话内容，无需压缩');
-    const model =typeof options.model === 'string' ? options.model : undefined, effort = typeof options.effort === 'string' ? options.effort : undefined;
+    if (/^\/compact\b/.test(content)) {
+      if (!/^\/compact\s*$/.test(content)) throw new HttpError(400, 'Codex 的 /compact 不支持附加说明');
+      if (!session.threadId) throw new HttpError(400, '还没有对话内容，无需压缩');
+    }
+    const model = typeof options.model === 'string' ? options.model : undefined, effort = typeof options.effort === 'string' ? options.effort : undefined;
     const selected = validateModel(await this.models(), model, effort);
     if (session.processing) throw new HttpError(409, '当前会话仍在运行');
     if (attachments.some(nativeImage) && selected?.images === false) throw new HttpError(400, '所选模型不支持图片输入');
@@ -170,10 +173,14 @@ export class CodexBridge {
         await this.request('thread/resume', { threadId: session.threadId, excludeTurns: true, ...config }); this.loaded.add(session.threadId);
       }
       // /compact 走 App Server 的原生压缩接口；它同样会发出 turn/started 与 turn/completed。
-      if (/^\/compact\s*$/.test(content)) { await this.request('thread/compact/start', { threadId: session.threadId }); return; }
+      if (/^\/compact\s*$/.test(content)) { await this.request('thread/compact/start', { threadId: session.threadId }); this.watchCompact(session); return; }
       const result = await this.request<{ turn: { id: string } }>('turn/start', { threadId: session.threadId, input: [{ type: 'text', text: withFileReferences(content, attachments) }, ...attachments.filter(nativeImage).map(item => ({ type: 'localImage', path: item.path }))], model: model ?? null, effort: effort ?? null, approvalPolicy, sandboxPolicy: { type: sandbox === 'danger-full-access' ? 'dangerFullAccess' : 'workspaceWrite' } });
       session.turnId = result.turn.id; this.persist();
     } catch(e) { if (session.processing) this.finish(session, false, String(e)); }
+  }
+  /** 压缩没有 turn/started 就不会有 turn/completed；30 秒内没动静则收尾，避免会话一直显示运行中。 */
+  private watchCompact(session: Session) {
+    setTimeout(() => { if (session.processing && !session.turnId) this.finish(session, false, 'Codex 没有响应压缩请求'); }, 30000).unref();
   }
   async abort(id: string) {
     const s = this.sessions.get(id);
