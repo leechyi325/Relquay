@@ -8,14 +8,14 @@ export type MessageQueue = { items: QueuedMessage[]; paused?: string; sending: b
 type History = { messages: unknown[]; hasMore?: boolean; nextOffset?: number };
 
 export function useChat(sessionId?: string, provider?: string) {
-  const [state, setState] = useState<ChatState>(emptyChat), [connected, setConnected] = useState(false), [reconnecting, setReconnecting] = useState(false), [ready, setReady] = useState(false);
+  const [state, setState] = useState<ChatState>(emptyChat), [connected, setConnected] = useState(false), [reconnecting, setReconnecting] = useState(false), [ready, setReady] = useState(false), [syncing, setSyncing] = useState(false);
   const [hasMore, setHasMore] = useState(false), [loadingHistory, setLoadingHistory] = useState(false), [queue, setQueue] = useState<MessageQueue>({ items: [], sending: false });
   const historyOffset = useRef(0), historyBusy = useRef(false), activeSession = useRef(sessionId); activeSession.current = sessionId;
   const ws = useRef<WebSocket | null>(null), snapshot = useRef(state); snapshot.current = state;
   useEffect(() => {
     // A conversation opened before shows its last page at once; the server's answer then replaces it in place.
     const cached = sessionId ? readHistory(origin, sessionId) : undefined, first = cached ? { ...emptyChat, events: cached } : emptyChat;
-    setState(first); snapshot.current = first; setConnected(false); setReconnecting(false); setReady(false); setHasMore(false); historyOffset.current = 0; setQueue({ items: [], sending: false });
+    setState(first); snapshot.current = first; setConnected(false); setReconnecting(false); setReady(false); setSyncing(!!sessionId); setHasMore(false); historyOffset.current = 0; setQueue({ items: [], sending: false });
     if (!sessionId) return;
     void api<MessageQueue>(`/api/conversations/${encodeURIComponent(sessionId)}/queue`).then(value => { if (!disposed) setQueue(value); }).catch(() => {});
     let disposed = false, timer: ReturnType<typeof setTimeout>, delay = 1000, connecting = false, probe: ReturnType<typeof setTimeout> | undefined, notice: ReturnType<typeof setTimeout> | undefined;
@@ -67,6 +67,7 @@ export function useChat(sessionId?: string, provider?: string) {
       finally { connecting = false; }
     };
     const catchUp = async () => {
+      setSyncing(true);
       try {
         const history = await cloud<History>(`/providers/sessions/${sessionId}/messages?limit=100`);
         if (disposed) return;
@@ -75,6 +76,7 @@ export function useChat(sessionId?: string, provider?: string) {
         if (merged.restarted) { historyOffset.current = history.nextOffset ?? history.messages.length; setHasMore(history.hasMore === true); }
         setState(s => { const next = { ...s, events: mergeLatestHistory(s.events, events)!.events }; snapshot.current = next; return next; });
       } catch { /* The live stream continues; the next reconnect tries again. */ missed = true; }
+      finally { if (!disposed) setSyncing(false); }
     };
     void cloud<History>(`/providers/sessions/${sessionId}/messages?limit=100`).then(history => {
       if (disposed) return;
@@ -82,7 +84,7 @@ export function useChat(sessionId?: string, provider?: string) {
       historyOffset.current = history.nextOffset ?? history.messages.length; setHasMore(history.hasMore === true);
       const initial = { ...emptyChat, events, lastSeq: Math.max(0, ...events.map(e => e.seq ?? 0)) };
       snapshot.current = initial; setState(initial);
-    }).catch(e => { if (!disposed) setState(s => ({ ...s, error: String(e) })); }).finally(() => { if (!disposed) void connect(); });
+    }).catch(e => { if (!disposed) setState(s => ({ ...s, error: String(e) })); }).finally(() => { if (!disposed) { setSyncing(false); void connect(); } });
     // Back from the background or a network change: a socket that looks open may be dead. Probe it and catch up,
     // reconnecting at once instead of waiting out the backoff.
     const wake = () => {
@@ -128,5 +130,5 @@ export function useChat(sessionId?: string, provider?: string) {
     send({ type: 'chat.send', sessionId, content, options: { permissionMode: 'default', ...options } });
     setState(s => ({ ...s, lastSeq: provider === 'codex' ? s.lastSeq : 0, processing: true, error: undefined, events: [...s.events, { kind: 'text', role: 'user', content, attachments: attachments.map(({ name, size, mime }) => ({ name, size, mime })), id: crypto.randomUUID(), optimistic: true }] }));
   }
-  return { ...state, connected, reconnecting, ready, message, send, hasMore, loadingHistory, loadEarlier, queue };
+  return { ...state, connected, reconnecting, ready, syncing, message, send, hasMore, loadingHistory, loadEarlier, queue };
 }

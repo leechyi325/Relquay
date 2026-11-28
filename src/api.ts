@@ -2,6 +2,7 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import { defaultOrigin } from '../shared/config';
 import { loadServers, normalizeOrigin } from '../shared/servers';
 import { clearHistory } from './history-cache';
+import { clearDrafts } from './drafts';
 interface Credentials { get(options?: { key: string }): Promise<{ token?: string }>; set(options: { token: string; key?: string }): Promise<void>; clear(options?: { key: string }): Promise<void>; }
 const secure = registerPlugin<Credentials>('StudioCredentials');
 const nativeFiles = registerPlugin<{ download(options: { url: string; filename: string; mime?: string }): Promise<void>; addListener(name: 'downloadProgress', listener: (value: { done: number; total: number }) => void): Promise<PluginListenerHandle>; openManager(options: { url: string }): Promise<void> }>('StudioFiles');
@@ -25,7 +26,7 @@ export async function restoreToken() {
   return current === generation ? token : '';
 }
 export async function saveToken(token: string, key = origin) {
-  if (!token) clearHistory(key);
+  if (!token) { clearHistory(key); clearDrafts(key); }
   if (key === origin) bearer = token;
   if (isNative) { if (token) await secure.set({ key, token }); else await secure.clear({ key }); }
   else if (token) sessionStorage.setItem('studio.token:' + key, token); else sessionStorage.removeItem('studio.token:' + key);
@@ -35,7 +36,7 @@ export function setOrigin(value: string) {
   if (next !== origin) { generation++; bearer = ''; }
   origin = next; localStorage.setItem('studio.origin', origin);
 }
-export async function forgetServer(key: string) { clearHistory(key); if (isNative) await secure.clear({ key }); sessionStorage.removeItem('studio.token:' + key); }
+export async function forgetServer(key: string) { clearHistory(key); clearDrafts(key); if (isNative) await secure.clear({ key }); sessionStorage.removeItem('studio.token:' + key); }
 export async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(origin + url, { ...options, credentials: 'include', headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options.headers }, signal: options.signal ?? AbortSignal.timeout(30000) });
   if (!res.ok) {

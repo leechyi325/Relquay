@@ -27,12 +27,12 @@ export function presentEvents(events: ChatEvent[]): ChatEvent[] {
           const boundary = thinking && previous.partIndex !== undefined && event.partIndex !== previous.partIndex ? '\n\n' : '';
           previous.content = current + boundary + content; previous.partIndex = event.partIndex;
         } else if (key || content.startsWith(current)) { previous.content = content; previous.kind = event.kind; if (!thinking) pendingText = undefined; }
-        else { const row = { ...event, content }; out.push(row); }
+        else { const row = { ...event, content, runTurn: turn }; out.push(row); }
         continue;
       }
-      const row = { ...event, content };
+      const row = { ...event, content, runTurn: turn };
       out.push(row); outputTurn = turn; if (key) items.set(key, row); else if (event.kind === 'stream_delta') pendingText = row;
-    } else { out.push({ ...event }); outputTurn = turn; }
+    } else { out.push({ ...event, runTurn: turn }); outputTurn = turn; }
   }
   return out;
 }

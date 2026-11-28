@@ -15,6 +15,7 @@
 <p align="center">
   <a href="#服务端安装与使用">快速开始</a> ·
   <a href="docs/user-guide.md">使用指南</a> ·
+  <a href="docs/roadmap.md">路线图</a> ·
   <a href="#介绍视频">介绍视频</a> ·
   <a href="#界面预览">界面预览</a> ·
   <a href="https://github.com/leechyi325/Relquay/issues">反馈问题</a> ·
@@ -75,7 +76,7 @@ https://github.com/user-attachments/assets/f049a6e0-826f-4ae6-9f05-81e6abdf6efc
 
 项目与 GitHub 仓库均已更名为 **Relquay · 云渡**。已有实例升级时保留原数据目录与服务名；本地仓库可运行 `git remote set-url origin https://github.com/leechyi325/Relquay.git` 更新远程地址。
 
-当前源码版本 **0.4.9**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
+当前源码版本 **0.4.10**，处于早期迭代阶段。首次使用需要部署自己的服务器，再通过浏览器或 Android App 连接。完整步骤见 [安装与首次连接](docs/getting-started.md)。
 
 ### 第一步：准备环境
 
@@ -146,14 +147,14 @@ npm run build
 npm run server:package
 ```
 
-生成 `artifacts/relquay-server-0.4.9.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
+生成 `artifacts/relquay-server-0.4.10.tar.gz` 及同名 `.sha256`，上传到服务器的私有目录。包内有预构建网页、服务端及相关源码、锁文件和文档，**不含依赖、AI 账号、工作台账号、AGENTS.md、项目文件或 APK**。它是联网安装包，不是离线单文件程序；当前不自动发布到 GitHub Releases。
 
 收到包与校验文件后，在两者所在目录执行：
 
 ```bash
-sha256sum -c relquay-server-0.4.9.tar.gz.sha256
+sha256sum -c relquay-server-0.4.10.tar.gz.sha256
 mkdir -p "$HOME/relquay/app"
-tar -xzf relquay-server-0.4.9.tar.gz --strip-components=1 -C "$HOME/relquay/app"
+tar -xzf relquay-server-0.4.10.tar.gz --strip-components=1 -C "$HOME/relquay/app"
 cd "$HOME/relquay/app"
 npm ci --include=dev
 npm ci --prefix upstream
@@ -220,7 +221,7 @@ curl -f http://127.0.0.1:3080/api/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/api/files
 ```
 
-应分别得到健康 JSON（0.4.9）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
+应分别得到健康 JSON（0.4.10）和 **401**。初次试用可从电脑建立 `ssh -L 3080:127.0.0.1:3080 用户@服务器`，在浏览器访问 `http://127.0.0.1:3080`。公网手机使用下一步的 HTTPS。
 
 #### 5. 配置 HTTPS 与后台常驻
 
@@ -323,10 +324,22 @@ docs/      安装、使用、配置和维护说明（media/ 为首页演示成�
 ## 更新记录
 
 <details>
-<summary>展开版本历史（当前 0.4.9）</summary>
+<summary>展开版本历史（当前 0.4.10）</summary>
 
 
-按版本倒序记录源码变化；部署状态见验证文档。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.9。
+按版本倒序记录源码变化；部署状态见验证文档。历史条目描述当时行为，当前操作入口以使用指南为准；当前版本 0.4.10。
+
+### 0.4.10 · 2026-11-28
+
+- 思考过程默认折叠：每个问题下的思考、工具调用/结果和 AI 中途的说明收成一行「思考过程」，只显示最后的回答，点开可看全部；处理中显示「正在处理」和最新工具名；错误不折叠；「会话信息」里可关闭。
+- 历史页缓存：网关按会话文件的修改时间和大小缓存 Claude 历史页，文件不变时 1–2 毫秒返回（85MB 的会话原需约 0.7 秒），有新内容写入后重新解析。
+- 复制范围限制：页面外壳不再可被选中，长按拖选只在对话正文、代码、工具输出和文件预览内；弹窗打开时底下的对话不参与选择。
+- 草稿：没发出去的文字按会话保存在手机上，退出对话、切换会话或重开 App 后仍在；退出登录和移除服务器时清除。
+- 消息与内容复制：每条消息有复制按钮；表格上方「复制表格」（制表符分隔，可粘进表格软件）；图片点击全屏、再点放大并可拖动。
+- 加载提示：重新进入会话时先显示手机缓存，同时在顶部出现「正在同步最新消息…」（不到约 0.35 秒的快速同步不显示）；没有缓存时显示「正在读取会话…」，不再先闪出空白欢迎页。
+- 界面统一：用量与服务器资源进度条改为圆角细条；「加载更早」「加载更早的问答」等次要按钮统一为描边样式；会话信息里的折叠选项改为开关；后台任务详情的操作改为整齐的按钮网格；未读提醒行加圆角；消息复制按钮并入消息标题行；设置页版本号随版本更新。
+- 新增 [路线图](docs/roadmap.md)：同类项目 Agents Anywhere 的调研对照和下一步优化清单。
+- Android versionCode 17，与 0.4.9 同一签名，可直接覆盖安装；网页界面打包在 APK 内，需安装新版 APK 才有以上界面功能（网关侧的历史缓存已随服务端部署生效）。
 
 ### 0.4.9 · 2026-11-28
 

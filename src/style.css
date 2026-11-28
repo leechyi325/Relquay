@@ -27,3 +27,33 @@
 .turn-more{width:100%;margin-top:10px}
 .turn-flash{animation:turn-flash 1.8s ease-out}@keyframes turn-flash{0%,35%{box-shadow:0 0 0 3px #b45e3c66}100%{box-shadow:0 0 0 3px #b45e3c00}}
 .jump-latest{height:0;position:relative;z-index:5;display:flex;justify-content:center;pointer-events:none}.jump-latest button{pointer-events:auto;transform:translateY(-44px);display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:7px 14px;font:inherit;font-size:12px;box-shadow:0 4px 14px #29405020;cursor:pointer}
+/* 文字选择限制在正文内：页面外壳不可选，长按拖选不会把标题栏、输入框、导航或弹窗下方的页面一并选中 */
+body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
+.markdown,.markdown *,.chat-scroll pre,.chat-scroll pre *,.text-preview,.viewer .markdown,.viewer .markdown *,.turn-preview p,.session-info dd,.job-log,.job-command,.terminal-copy-text,.error-banner,.config-path code,.tool-row pre,.tool-row pre *{-webkit-user-select:text;user-select:text}
+.chat-scroll button,.chat-scroll summary,.message-author,.message-attachments{-webkit-user-select:none;user-select:none}
+/* 弹窗打开时，底下的对话不参与选择 */
+body:has([aria-modal="true"]) .chat-scroll,body:has([aria-modal="true"]) .chat-scroll *{-webkit-user-select:none;user-select:none}
+/* 消息复制、表格复制、图片放大 */
+.message-head{display:flex;align-items:center;justify-content:space-between;min-height:24px;margin-bottom:4px}.message-head .message-author{margin:0}.msg-copy{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:26px;margin:-2px -6px -2px 0;border-radius:8px;background:transparent;color:var(--muted);opacity:.5}.msg-copy:active,.msg-copy:focus-visible{opacity:1;background:var(--line)}
+.table-block{margin:12px 0;min-width:0}.table-tools{display:flex;justify-content:flex-end;margin-bottom:2px}.table-tools button{display:inline-flex;align-items:center;gap:4px;min-height:32px;padding:0 9px;border-radius:8px;background:transparent;color:var(--muted);font-size:11px}.table-tools button:active{background:var(--line)}.table-block table{margin:0!important}
+.img-open{display:inline-block;padding:0;background:none;border:0;max-width:100%;cursor:zoom-in}.img-open img{display:block;max-width:100%;height:auto}
+.img-zoom{position:fixed;inset:0;z-index:90;background:#000000e6;display:flex;align-items:center;justify-content:center}.img-zoom-close{position:absolute;top:calc(env(safe-area-inset-top,0px) + 10px);right:12px;z-index:2;width:44px;height:44px;border-radius:50%;background:#ffffff26;color:#fff;display:flex;align-items:center;justify-content:center}
+.img-zoom-stage{width:100%;height:100%;overflow:auto;display:flex;align-items:center;justify-content:center;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y pinch-zoom}.img-zoom-stage img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in}.img-zoom-stage.zoomed{display:block}.img-zoom-stage.zoomed img{max-width:none;max-height:none;width:250vw;height:auto;cursor:zoom-out}
+/* 思考与工具过程：默认折叠成一行，展开后缩进显示原有的逐条内容 */
+.process-fold{margin-bottom:12px}.process-fold summary strong{font-size:12px;font-weight:600}.process-fold summary small{font-size:11px;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.process-body{border-top:1px solid var(--line);padding:10px 10px 2px;background:var(--paper)}.process-body>*:last-child{margin-bottom:8px}.process-body .assistant-message{padding:4px 2px;color:var(--muted)}
+
+/* 统一细节：加载提示、次要按钮、进度条、开关、任务操作与未读行 */
+.sync-note{height:0;position:relative;z-index:6;display:flex;justify-content:center;pointer-events:none}.sync-note>span{transform:translateY(10px);display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--muted);font-size:11px;box-shadow:0 4px 14px #29405014;opacity:0;animation:sync-in .25s .35s ease-out forwards}@keyframes sync-in{to{opacity:1}}
+.chat-loading{display:flex;flex-direction:column;align-items:center;gap:12px;padding:90px 0;color:var(--muted);font-size:12px}
+.secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 18px;border:1px solid var(--line);border-radius:12px;background:var(--paper);color:var(--ink);font-size:13px}.secondary:active{background:var(--soft)}
+.history-more{display:flex;align-items:center;gap:6px;width:fit-content;min-height:36px;padding:0 16px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--muted);font-size:12px}.history-more:active{background:var(--soft)}
+progress{-webkit-appearance:none;appearance:none;display:block;height:6px;border:0;border-radius:999px;overflow:hidden;background:#e7e8e1;color:#7d9a86}progress::-webkit-progress-bar{background:#e7e8e1;border-radius:999px}progress::-webkit-progress-value{background:currentColor;border-radius:999px;transition:width .3s}progress::-moz-progress-bar{background:currentColor;border-radius:999px}
+.quota-window progress{color:#638677;height:6px}.quota-window progress.low-quota{color:#b45e3c}.settings-meters progress{color:#8a9b7c;height:5px}
+.action-list>button small{display:block;margin-top:3px;font-size:11px;color:var(--muted);font-weight:400}.action-list>button>span{min-width:0}
+.switch-row{width:100%}.switch{margin-left:auto;position:relative;width:40px;height:24px;border-radius:999px;background:#d9dcd2;flex-shrink:0;transition:background .2s}.switch:after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fffefa;box-shadow:0 1px 3px #29405033;transition:transform .2s}.switch-row[aria-checked=true] .switch{background:#7d9a86}.switch-row[aria-checked=true] .switch:after{transform:translateX(16px)}
+.job-detail-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.job-detail-actions button{min-height:40px;padding:0 13px;border:1px solid var(--line);border-radius:11px;background:var(--paper);font-size:12px;justify-content:center}.job-detail-actions button:active{background:var(--soft)}.job-detail-actions .danger-text{border-color:#e6cdbf}
+.notice-row.unread{border-radius:14px}
+.agent-tabs{overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent)}.agent-tabs::-webkit-scrollbar{display:none}.agent-tabs button{flex:0 0 auto}
+.primary+.inline-note{margin-top:14px}

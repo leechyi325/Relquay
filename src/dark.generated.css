@@ -61,6 +61,12 @@ html[data-theme=dark] .hljs-deletion{color:#b78d80;background:#201814}
 html[data-theme=dark] .hljs-addition{background:#191e17}
 html[data-theme=dark] .hljs-tag,html[data-theme=dark] .hljs-name{color:#c29784}
 html[data-theme=dark] .turn-list li.expanded{border-color:#473b33}
+html[data-theme=dark] .img-zoom-close{background:#12121226}
+html[data-theme=dark] progress{background:#1c1d1a}
+html[data-theme=dark] progress::-webkit-progress-bar{background:#1c1d1a}
+html[data-theme=dark] .switch{background:#20211e}
+html[data-theme=dark] .switch:after{background:#1a170b}
+html[data-theme=dark] .job-detail-actions .danger-text{border-color:#44342b}
 html[data-theme=dark] .login-server-button{border:1px solid #323631;background:#191813;color:#bcc7d2}
 html[data-theme=dark] .server-row{border:1px solid #31342e}
 html[data-theme=dark] .server-select{color:#bcc7d2}

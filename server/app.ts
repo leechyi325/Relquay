@@ -22,6 +22,7 @@ import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
 import { appVersion } from '../shared/config.ts';
 import { slimHistory } from './history.ts';
+import { HistoryCache, cloudTranscripts, type TranscriptPath } from './history-cache.ts';
 import { UsageStore, ClaudeQuota, claudeTranscriptTotals } from './usage.ts';
 import { QuotaRefresher, quotaRefreshSchema, claudeSender } from './quota-refresh.ts';
 import { NotificationStore } from './notifications.ts';
@@ -35,7 +36,7 @@ import type { ResolvedAttachment } from './attachments.ts';
 import type { ChatEvent } from '../shared/protocol.ts';
 
 const exec = promisify(execFile);
-type Config = { claudeCommand?: string; base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions };
+type Config = { claudeCommand?: string; base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions; transcripts?: TranscriptPath };
 type LoginSession = { token: string; cloudToken: string; username: string; expires: number };
 const readBearer = (req: Request) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
 const readCookie = (req: Request) => /(?:^|;\s*)studio=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
@@ -51,6 +52,7 @@ export function createStudio(config: Config) {
   // Set once the queue exists; the Codex bridge may replay interrupted runs while it is being constructed.
   const hooks = { event: (_event: ChatEvent) => {} };
   const codex = new CodexBridge(path.join(config.state, 'codex'), config.codexCommand ?? 'codex', config.codexArgs ?? ['app-server', '--listen', 'stdio://'], event => { notices.ingest(event, 'codex'); usage.ingest(event); hooks.event(event); });
+  const historyCache = new HistoryCache(config.transcripts ?? cloudTranscripts());
   const attachments = new Attachments(path.join(config.state, 'attachments'), files, config.cloudAssets ?? path.join(os.homedir(), '.cloudcli/assets'));
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 'loopback');
   const server = createServer(app), wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
@@ -343,8 +345,17 @@ export function createStudio(config: Config) {
       const offset = z.coerce.number().int().min(0).max(1000000).default(0).parse(req.query.offset);
       res.json({ success: true, data: codex.history(history[1], limit, offset) }); return;
     }
+    if (req.method === 'GET' && history) {
+      // An unchanged transcript is answered from memory instead of being parsed again upstream.
+      const page = new URLSearchParams(req.url.split('?')[1] ?? '');
+      const body = await historyCache.get(history[1], `${page.get('limit') ?? ''}|${page.get('offset') ?? ''}`, async () => {
+        const result = await cloud(req.url, res.locals.session.cloudToken, { method: 'GET' });
+        if (result.data) result.data = slimHistory(result.data);
+        return result;
+      });
+      res.type('json').send(body); return;
+    }
     const data = await cloud(req.url, res.locals.session.cloudToken, { method: req.method, ...(req.method === 'GET' ? {} : { body: JSON.stringify(req.body) }) });
-    if (req.method === 'GET' && history && data.data) data.data = slimHistory(data.data);
     if (req.method === 'GET' && req.path === '/providers/sessions/recent' && Array.isArray(data.data?.conversations)) {
       data.data.conversations = recentConversations(data.data.conversations);
     }

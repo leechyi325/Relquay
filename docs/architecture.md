@@ -1,6 +1,6 @@
 # 架构与合同
 
-适用版本：**0.4.9**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
+适用版本：**0.4.10**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
 
 ## 范围与数据流
 
@@ -51,6 +51,8 @@ CloudCLI 保持稳定应用会话 ID。自有 Codex 原生 thread ID 作为别�
 
 消息按事件游标重放，断线保留待处理批准。Codex 事件游标跨轮次持久；Claude 使用上游重放语义。思考摘要和代理返回的可读思考分组折叠，不索取或伪造隐藏思考。历史分页向用户/轮次边界扩展，防止切断长思考；更早消息 prepend 不重置实时游标。自有历史 limit 1–500、offset 0–1000000，Claude 使用上游尾部 offset。网关返回 Claude 历史页时裁剪工具输出（每条 `toolResult.content` 至多 4000 字，base64 图片折叠，去掉重复的 `toolUseResult`），聊天界面不显示这些内容；实时事件不裁剪。工具调用折叠块展开后才构建内容。手机在 localStorage 保存每个会话最近 40 条可见事件（去掉工具输出，单会话 150KB、最多 12 个会话，退出登录时清除），打开时先显示，服务器历史到达后原位替换。加载更早消息时关闭浏览器滚动锚定并在布局提交后按高度差还原位置；问答目录由 `shared/turns.ts` 从已渲染消息切出。
 
+网关用 `server/history-cache.ts` 缓存 Claude 历史页：从 CloudCLI 数据库查到会话文件，以其修改时间和大小为凭据，不变则直接返回内存中的页（最多 64 页、64MB，同一页的并发请求共用一次解析；空应答、错误不缓存；查不到文件就不缓存）。聊天界面由 `shared/fold.ts` 把每个问题下的思考、工具调用/结果和中途说明收成一个折叠项，只留最后的回答；运行中最后一段文字先当作回答，之后又有新步骤才并入折叠项；`presentEvents` 给每行加 `runTurn`，使没有用户回显的排队消息第二轮也能分段。
+手机本地存储（localStorage）保存两类内容，都按服务器地址分区，退出登录或移除服务器时清除：历史缓存 `relquay.history:*`（每会话最近一页，永远以服务器返回为准）与未发送草稿 `relquay.draft:*`（`src/drafts.ts`，内容为空即删除，单条上限 2 万字，存储被禁用时静默跳过）。消息复制、表格复制（`TableBlock` 从渲染后的单元格取文本，制表符分隔）和图片放大（`ZoomImage`，仅 https 图片）在 `src/ChatMarkdown.tsx`。
 Markdown 使用应用自己的 React 组件和 GFM，支持表格、任务列表、删除线、语义标题/列表/引用、代码语言与复制。跳过原始 HTML，外链只允许 HTTP(S)。交互参考 [HAPI](https://github.com/tiann/hapi/tree/65c8dc727a55b8bc14b8a17fc6ded6ca5846dd9d/web/src/components/assistant-ui) 与 [Paseo](https://github.com/getpaseo/paseo/blob/902b0c7a1637cc7a6c2ee268dca8161965a35def/docs/markdown-renderer.md)，没有直接复制其产品源码。
 
 Claude 的事件游标每轮从 1 开始；重连后若上一轮已经结束（`chat_subscribed.isProcessing=false`），客户端读取最新一页历史替换最近内容，保留已加载的更早页和未确认的发送。网关每 25 秒对客户端 ping，回收失效连接；客户端回到前台时用 `relquay.ping` 探测连接，5 秒无回应立即重连。CloudCLI 广播的 `session_upserted`、`scheduled_messages_changed` 等帧不进入消息列表，也不改变运行状态。
