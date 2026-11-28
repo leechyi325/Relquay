@@ -54,6 +54,7 @@ export class CodexBridge {
     session.title = title; if (projectDisplayName) session.projectDisplayName = projectDisplayName; this.persist();
   }
   has(id: string) { return this.sessions.has(id); }
+  busy(id: string) { return this.sessions.get(id)?.processing === true; }
   async archive(id: string) {
     const session = this.sessions.get(id); if (!session) return;
     if (session.processing) throw new HttpError(409, '会话正在运行，请先停止后再删除');

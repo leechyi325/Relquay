@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { defaultOrigin } from '../shared/config';
 import { loadServers, normalizeOrigin } from '../shared/servers';
+import { clearHistory } from './history-cache';
 interface Credentials { get(options?: { key: string }): Promise<{ token?: string }>; set(options: { token: string; key?: string }): Promise<void>; clear(options?: { key: string }): Promise<void>; }
 const secure = registerPlugin<Credentials>('StudioCredentials');
 const nativeFiles = registerPlugin<{ download(options: { url: string; filename: string; mime?: string }): Promise<void>; addListener(name: 'downloadProgress', listener: (value: { done: number; total: number }) => void): Promise<PluginListenerHandle>; openManager(options: { url: string }): Promise<void> }>('StudioFiles');
@@ -24,6 +25,7 @@ export async function restoreToken() {
   return current === generation ? token : '';
 }
 export async function saveToken(token: string, key = origin) {
+  if (!token) clearHistory(key);
   if (key === origin) bearer = token;
   if (isNative) { if (token) await secure.set({ key, token }); else await secure.clear({ key }); }
   else if (token) sessionStorage.setItem('studio.token:' + key, token); else sessionStorage.removeItem('studio.token:' + key);
@@ -33,7 +35,7 @@ export function setOrigin(value: string) {
   if (next !== origin) { generation++; bearer = ''; }
   origin = next; localStorage.setItem('studio.origin', origin);
 }
-export async function forgetServer(key: string) { if (isNative) await secure.clear({ key }); sessionStorage.removeItem('studio.token:' + key); }
+export async function forgetServer(key: string) { clearHistory(key); if (isNative) await secure.clear({ key }); sessionStorage.removeItem('studio.token:' + key); }
 export async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(origin + url, { ...options, credentials: 'include', headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...options.headers }, signal: options.signal ?? AbortSignal.timeout(30000) });
   if (!res.ok) {
@@ -54,7 +56,7 @@ export async function cloud<T>(url: string, options?: RequestInit): Promise<T> {
   const value = await api<{ data?: T } & T>('/api/cloud' + url, options);
   return value.data ?? value;
 }
-export async function socket(channel: 'chat' | 'terminal') {
+export async function socket(channel: 'chat' | 'terminal' | 'events') {
   const address = origin, current = generation;
   const { ticket } = await post<{ ticket: string }>('/api/socket-ticket', { channel });
   if (current !== generation) throw new Error('服务器已切换');

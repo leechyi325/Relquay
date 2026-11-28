@@ -46,6 +46,21 @@ html[data-theme=dark] .tool-event{border:1px solid #32362a;background:#171810}
 html[data-theme=dark] .tool-event.error-event{border-color:#4c382e;background:#1e1712}
 html[data-theme=dark] .permission-card{background:#201b12}
 @media (min-width:900px){html[data-theme=dark] .desktop-rail{background:#1b1b16;border-right:1px solid #32362b}html[data-theme=dark] .desktop-rail nav button.active{color:#bb9382;background:#211e19}html[data-theme=dark] .rail-project{border:1px solid #353a2d}html[data-theme=dark] .desktop-breadcrumb strong{color:#9ba496}}
+html[data-theme=dark] .file-link.code code{background:#201a15}
+html[data-theme=dark] .queue-item{border:1px dashed #453f35;background:#1a1710}
+html[data-theme=dark] .queue-item>span{color:#a3aaa3}
+html[data-theme=dark] .queue-paused{color:#b78d80;background:#201712;border:1px solid #47322a}
+html[data-theme=dark] .queue-paused button{background:#1c150c;color:#b78d80}
+html[data-theme=dark] .send-button.queue{background:#231f1a;color:#beae9d}
+html[data-theme=dark] .hljs-keyword,html[data-theme=dark] .hljs-selector-tag,html[data-theme=dark] .hljs-meta .hljs-keyword,html[data-theme=dark] .hljs-doctag{color:#c29784}
+html[data-theme=dark] .hljs-string,html[data-theme=dark] .hljs-regexp,html[data-theme=dark] .hljs-addition,html[data-theme=dark] .hljs-meta .hljs-string{color:#9cb29d}
+html[data-theme=dark] .hljs-title,html[data-theme=dark] .hljs-title.function_,html[data-theme=dark] .hljs-section,html[data-theme=dark] .hljs-selector-id{color:#98b1c6}
+html[data-theme=dark] .hljs-title.class_,html[data-theme=dark] .hljs-type,html[data-theme=dark] .hljs-built_in,html[data-theme=dark] .hljs-selector-class{color:#cfb58d}
+html[data-theme=dark] .hljs-attr,html[data-theme=dark] .hljs-attribute,html[data-theme=dark] .hljs-variable,html[data-theme=dark] .hljs-template-variable,html[data-theme=dark] .hljs-property{color:#9eb8be}
+html[data-theme=dark] .hljs-deletion{color:#b78d80;background:#201814}
+html[data-theme=dark] .hljs-addition{background:#191e17}
+html[data-theme=dark] .hljs-tag,html[data-theme=dark] .hljs-name{color:#c29784}
+html[data-theme=dark] .turn-list li.expanded{border-color:#473b33}
 html[data-theme=dark] .login-server-button{border:1px solid #323631;background:#191813;color:#bcc7d2}
 html[data-theme=dark] .server-row{border:1px solid #31342e}
 html[data-theme=dark] .server-select{color:#bcc7d2}

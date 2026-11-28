@@ -6,14 +6,26 @@ import type { NotificationStore } from './notifications.ts';
 export class CloudObserver {
   private connection?: WebSocket; private timer?: NodeJS.Timeout; private busy = false; private stopped = false;
   private subscribed = new Set<string>();
-  private cursors = new Map<string, number>();
-  constructor(private cloud: string, private token: () => string | undefined, private notices: NotificationStore, private ownCodex: (id: string) => boolean, private event: (event: ChatEvent) => void) {}
+  private cursors = new Map<string, number>(); private runningKey = '';
+  /** Latest Claude sessions CloudCLI reports as running. */
+  running: string[] = [];
+  constructor(private cloud: string, private token: () => string | undefined, private notices: NotificationStore, private ownCodex: (id: string) => boolean, private event: (event: ChatEvent) => void, private runningChanged: (ids: string[]) => void = () => {}) {}
   start() { if (this.timer || this.stopped) return; void this.refresh(); this.timer = setInterval(() => { void this.refresh(); }, 3000); this.timer.unref(); }
   watch(id: string) {
     this.start();
     if (this.connection?.readyState === WebSocket.OPEN && !this.subscribed.has(id)) this.subscribe([id]);
   }
   begin(id: string) { this.cursors.set(id, 0); this.subscribed.delete(id); this.watch(id); }
+  /** Sends a frame for a run the server starts itself (queued messages); the observer then follows that run. */
+  async send(frame: { sessionId: string } & Record<string, unknown>) {
+    const deadline = Date.now() + 8000;
+    while (this.connection?.readyState !== WebSocket.OPEN) {
+      if (this.stopped || Date.now() > deadline) throw new Error('与 CloudCLI 的连接未就绪');
+      if (!this.busy) void this.refresh();
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    this.cursors.set(frame.sessionId, 0); this.connection.send(JSON.stringify(frame)); this.subscribed.add(frame.sessionId);
+  }
   private subscribe(ids: string[]) {
     if (!ids.length || this.connection?.readyState !== WebSocket.OPEN) return;
     this.connection.send(JSON.stringify({ type: 'chat.subscribe', sessions: ids.map(sessionId => ({ sessionId, lastSeq: this.cursors.get(sessionId) ?? 0 })) })); for (const id of ids) this.subscribed.add(id);
@@ -28,7 +40,8 @@ export class CloudObserver {
       const body = await response.json() as { data: { sessions: { sessionId: string; provider?: string }[] } };
       if (this.stopped) return;
       const ids = body.data.sessions.filter(session => typeof session.sessionId === 'string' && !this.ownCodex(session.sessionId) && (!session.provider || session.provider === 'claude')).map(session => session.sessionId);
-      this.notices.running(ids);
+      this.notices.running(ids); this.running = ids;
+      const key = [...ids].sort().join(','); if (key !== this.runningKey) { this.runningKey = key; this.runningChanged(ids); }
       if (!this.connection || this.connection.readyState === WebSocket.CLOSED) {
         const ws = new WebSocket(this.cloud.replace(/^http/, 'ws') + '/ws', { headers: { Authorization: 'Bearer ' + token }, maxPayload: 8 * 1024 * 1024 }); this.connection = ws; this.subscribed.clear();
         ws.on('open', () => { if (this.stopped) { ws.close(); return; } this.subscribe([...new Set([...ids, ...this.notices.watched()])]); });

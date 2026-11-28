@@ -1,6 +1,6 @@
 # 架构与合同
 
-适用版本：**0.4.8**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
+适用版本：**0.4.9**。[返回首页](../README.md) · [部署维护](deployment.md) · [验证记录](validation.md)
 
 ## 范围与数据流
 
@@ -49,15 +49,21 @@ CloudCLI 保持稳定应用会话 ID。自有 Codex 原生 thread ID 作为别�
 
 查询/重命名先解析真实身份；名称 trim 后 1–200 字符，允许运行时重命名，不修改工作目录。自有 Codex 保存可选名称元数据，原生重命名尽力同步。删除检查双 ID 的运行状态，先 archive 原生线程再删除网关记录与对应目录条目，项目文件保留。
 
-消息按事件游标重放，断线保留待处理批准。Codex 事件游标跨轮次持久；Claude 使用上游重放语义。思考摘要和代理返回的可读思考分组折叠，不索取或伪造隐藏思考。历史分页向用户/轮次边界扩展，防止切断长思考；更早消息 prepend 不重置实时游标。自有历史 limit 1–500、offset 0–1000000，Claude 使用上游尾部 offset。
+消息按事件游标重放，断线保留待处理批准。Codex 事件游标跨轮次持久；Claude 使用上游重放语义。思考摘要和代理返回的可读思考分组折叠，不索取或伪造隐藏思考。历史分页向用户/轮次边界扩展，防止切断长思考；更早消息 prepend 不重置实时游标。自有历史 limit 1–500、offset 0–1000000，Claude 使用上游尾部 offset。网关返回 Claude 历史页时裁剪工具输出（每条 `toolResult.content` 至多 4000 字，base64 图片折叠，去掉重复的 `toolUseResult`），聊天界面不显示这些内容；实时事件不裁剪。工具调用折叠块展开后才构建内容。手机在 localStorage 保存每个会话最近 40 条可见事件（去掉工具输出，单会话 150KB、最多 12 个会话，退出登录时清除），打开时先显示，服务器历史到达后原位替换。加载更早消息时关闭浏览器滚动锚定并在布局提交后按高度差还原位置；问答目录由 `shared/turns.ts` 从已渲染消息切出。
 
 Markdown 使用应用自己的 React 组件和 GFM，支持表格、任务列表、删除线、语义标题/列表/引用、代码语言与复制。跳过原始 HTML，外链只允许 HTTP(S)。交互参考 [HAPI](https://github.com/tiann/hapi/tree/65c8dc727a55b8bc14b8a17fc6ded6ca5846dd9d/web/src/components/assistant-ui) 与 [Paseo](https://github.com/getpaseo/paseo/blob/902b0c7a1637cc7a6c2ee268dca8161965a35def/docs/markdown-renderer.md)，没有直接复制其产品源码。
+
+Claude 的事件游标每轮从 1 开始；重连后若上一轮已经结束（`chat_subscribed.isProcessing=false`），客户端读取最新一页历史替换最近内容，保留已加载的更早页和未确认的发送。网关每 25 秒对客户端 ping，回收失效连接；客户端回到前台时用 `relquay.ping` 探测连接，5 秒无回应立即重连。CloudCLI 广播的 `session_upserted`、`scheduled_messages_changed` 等帧不进入消息列表，也不改变运行状态。
+
+排队消息保存在 `STATE/message-queue.json`，每会话最多 5 条。服务器在本会话一轮正常 `complete` 后发送下一条（Claude 经服务器观察连接，Codex 经自有桥），同一完成事件在多条连接上只处理一次；`aborted` 或 `success:false` 暂停队列，发送失败的消息放回队首并暂停。刚转发、尚未在上游显示为运行中的会话视为忙碌。只有发送过 `relquay.hello` 的聊天连接才会收到 `relquay_queue` 帧。
 
 批准只有显式单次允许/拒绝；问题使用协议可用的选择或输入，提交后等服务端确认。通知跳转先解析目标再标读/导航，已删除目标不创建空白会话；错误保留收件箱并显示可处理提示。
 
 ## 文件与附件
 
 模块一个或多个绑定，默认边界为 home 和 STUDIO_BASE，可配置其他允许根。输入先检查词法路径，再检查真实路径；读写、移动和目录创建都不能通过符号链接越界。有排队/运行任务的绑定不能重映射。移除模块不删除物理文件。
+
+对话中的路径经 `POST /api/files/locate` 映射：支持绝对路径、`~/`、`file://` 和相对会话目录的路径，取包含其真实路径的最具体绑定根；不存在或在绑定外统一返回 404。`POST /api/files/delete` 递归删除文件或文件夹，拒绝根目录、包含其他绑定根或活动任务目录的文件夹；符号链接只删除链接本身。
 
 上传不覆盖已存在文件，单文件上限 512MB；文本上限 2MB，比较 mtime 后原子替换。二进制文本编辑拒绝。Range 返回正确的分段/416，预览链接失效需重新签发。
 
@@ -117,7 +123,8 @@ Skills 仅管理独立用户目录，限制名称/描述、256KB 文稿、20MB/2
 | `/api/jobs`、`/:id`、`/:id/cancel`、`/:id/log` | 任务增查改删、取消、日志 |
 | `/api/usage/accounts`、`/api/usage/sessions`、`/api/usage/sessions/:id` | 账号和会话用量；列表 provider/search/offset/limit，limit 1–100、offset 0–10000、search ≤200 字 |
 | `/api/notifications`、`/:id`、`/:id/read`、`/read-all` | 提醒与读取状态 |
-| `/api/socket-ticket`、`/ws/chat`、`/ws/terminal` | 短票据及实时连接 |
+| `/api/conversations/:id/queue`、`/:item`、`/resume` | 排队消息查询、添加、取消、继续 |
+| `/api/socket-ticket`、`/ws/chat`、`/ws/terminal`、`/ws/events` | 短票据及实时连接；`events` 推送 `changed` 提示（jobs、notifications、running、sessions），客户端只重新读取变化的部分，连接时轮询降为 60 秒 |
 | `/api/filebrowser-link`、`/preview/:capability/*` | 高级文件配对与受限预览 |
 
 ## 错误与验证要求

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, ArrowLeft, ArrowUpRight, Check, ChevronRight, Code2, File, FileAudio, FileImage, FileText, Film, Folder, FolderPlus, Grid2X2, List, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, Settings2, Search, Upload, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowLeft, ArrowUpRight, Check, ChevronRight, Code2, File, FileAudio, FileImage, FileText, Film, Folder, FolderPlus, Grid2X2, List, LoaderCircle, MoreHorizontal, Pencil, RefreshCw, Settings2, Search, Trash2, Upload, X } from 'lucide-react';
 import { ChatMarkdown } from './ChatMarkdown';
 import { api, post, params, origin, downloadFile, type DownloadState } from './api';
 import { useFileModules, useRootNames } from './file-roots';
 import { FileModuleManager } from './FileModules';
+import { same } from './stable';
 import type { FileEntry, FileLocation } from '../shared/protocol';
+export { same };
 
 export { defaultRootNames as rootNames } from './file-roots';
 export function bytes(value: number) { return value < 1024 ? value + ' B' : value < 1024 ** 2 ? (value / 1024).toFixed(1) + ' KB' : value < 1024 ** 3 ? (value / 1024 ** 2).toFixed(1) + ' MB' : (value / 1024 ** 3).toFixed(1) + ' GB'; }
@@ -30,15 +32,18 @@ export function FilesPage({ location, setLocation, terminal, reference, toast }:
   const currentModule = modules.find(module => module.id === moduleId) ?? modules.find(module => module.folders.some(folder => folder.id === location.root)) ?? modules[0];
   const showingFolders = currentModule?.folders.length > 1 && !currentModule.folders.some(folder => folder.id === location.root);
   useEffect(() => { if (!roots.some(root => root.id === location.root) && !showingFolders && roots.length) setLocation({ root: roots[0].id, path: '' }); }, [roots, location.root, showingFolders, setLocation]);
-  useEffect(() => { const timer = setInterval(() => { if (document.visibilityState === 'visible') setRefresh(v => v + 1); }, 10000); const wake = () => setRefresh(v => v + 1); window.addEventListener('focus', wake); return () => { clearInterval(timer); window.removeEventListener('focus', wake); }; }, []);
   const [entries, setEntries] = useState<FileEntry[]>([]), [search, setSearch] = useState(''), [grid, setGrid] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(''), [selected, setSelected] = useState<FileEntry>(), [view, setView] = useState<FileEntry>(), [refresh, setRefresh] = useState(0);
-  const [form, setForm] = useState<'folder' | 'move'>(), [name, setName] = useState(''), [busy, setBusy] = useState(false);
-  const upload = useRef<HTMLInputElement>(null);
+  const [form, setForm] = useState<'folder' | 'move'>(), [name, setName] = useState(''), [busy, setBusy] = useState(false), [removing, setRemoving] = useState<FileEntry>();
+  const upload = useRef<HTMLInputElement>(null), shown = useRef('');
+  const folderKey = location.root + '\0' + location.path;
   useEffect(() => {
-    let live = true; if (showingFolders) { setEntries([]); setLoading(false); return; } setLoading(true); setError(''); setSearch('');
-    void api<FileEntry[]>('/api/files?' + params(location)).then(v => { if (live) setEntries(v); }).catch(e => { if (live) setError(e.message); }).finally(() => { if (live) setLoading(false); });
+    let live = true; if (showingFolders) { setEntries([]); setLoading(false); shown.current = ''; return; }
+    // Only a change of folder shows the loading state; refreshes of the same folder update the list in place.
+    const moved = shown.current !== folderKey; if (moved) { setLoading(true); setError(''); setSearch(''); }
+    void api<FileEntry[]>('/api/files?' + params(location)).then(v => { if (live) { setEntries(same(v)); setError(''); shown.current = folderKey; } }).catch(e => { if (live && (moved || !entries.length)) setError(e.message); }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [location.root, location.path, refresh, showingFolders]);
+  }, [folderKey, refresh, showingFolders]);
+  useEffect(() => { const tick = () => { if (document.visibilityState === 'visible') setRefresh(v => v + 1); }; const timer = setInterval(tick, 10000); window.addEventListener('focus', tick); return () => { clearInterval(timer); window.removeEventListener('focus', tick); }; }, []);
   async function uploadFiles(fileList: FileList | null) {
     if (!fileList) return; setBusy(true);
     try { for (const file of fileList) { const body = new FormData(); body.append('file', file); await api('/api/files/upload?' + params(location), { method: 'POST', body, signal: AbortSignal.timeout(600000) }); } toast('已上传到服务器'); setRefresh(v => v + 1); }
@@ -51,6 +56,11 @@ export function FilesPage({ location, setLocation, terminal, reference, toast }:
       else if (selected) await post('/api/files/move', { from: selected, to: { root: location.root, path: name.trim() } });
       setForm(undefined); setSelected(undefined); setRefresh(v => v + 1); toast('文件已更新');
     } catch(e) { toast(String(e)); } finally { setBusy(false); }
+  }
+  async function remove(entry: FileEntry) {
+    setBusy(true);
+    try { await post('/api/files/delete', { root: entry.root, path: entry.path }); setRemoving(undefined); setEntries(list => list.filter(item => item.path !== entry.path)); setRefresh(v => v + 1); toast((entry.directory ? '文件夹' : '文件') + '已删除'); }
+    catch(e) { toast(String(e)); } finally { setBusy(false); }
   }
   const filtered = entries.filter(e => e.name.toLowerCase().includes(search.toLowerCase()));
   return <div className="files-page">
@@ -66,14 +76,22 @@ export function FilesPage({ location, setLocation, terminal, reference, toast }:
     <div className="folder-footer"><span>{entries.length} 个项目</span><button onClick={() => terminal(location)}><Code2 size={15}/>在此打开终端</button></div>
     </>}
     {manager && <FileModuleManager close={() => setManager(false)} changed={() => { setModuleId(undefined); setRefresh(v => v + 1); }}/>}
-    {selected && !form && <Sheet title={selected.name} close={() => setSelected(undefined)}><div className="action-list">{!selected.directory && <><button onClick={() => { setView(selected); setSelected(undefined); }}><FileIcon entry={selected} size={19}/>打开预览</button><button onClick={() => { reference(selected); setSelected(undefined); }}><ArrowUpRight size={19}/>引用到 AI 对话</button><button onClick={() => void downloadFile(selected.root, selected.path).catch(e => toast(e.message))}><ArrowDownToLine size={19}/>下载文件</button></>}<button onClick={() => { setName(selected.path); setForm('move'); }}><Pencil size={19}/>重命名 / 移动</button>{selected.directory && <button onClick={() => { terminal(selected); setSelected(undefined); }}><Code2 size={19}/>在此打开终端</button>}</div></Sheet>}
+    {selected && !form && <Sheet title={selected.name} close={() => setSelected(undefined)}><div className="action-list">{!selected.directory && <><button onClick={() => { setView(selected); setSelected(undefined); }}><FileIcon entry={selected} size={19}/>打开预览</button><button onClick={() => { reference(selected); setSelected(undefined); }}><ArrowUpRight size={19}/>引用到 AI 对话</button><button onClick={() => void downloadFile(selected.root, selected.path).catch(e => toast(e.message))}><ArrowDownToLine size={19}/>下载文件</button></>}<button onClick={() => { setName(selected.path); setForm('move'); }}><Pencil size={19}/>重命名 / 移动</button>{selected.directory && <button onClick={() => { terminal(selected); setSelected(undefined); }}><Code2 size={19}/>在此打开终端</button>}<button className="danger-text" onClick={() => { setRemoving(selected); setSelected(undefined); }}><Trash2 size={19}/>删除{selected.directory ? '文件夹' : '文件'}</button></div></Sheet>}
+    {removing && <DeleteSheet entry={removing} busy={busy} close={() => { if (!busy) setRemoving(undefined); }} confirm={() => void remove(removing)}/>}
     {form && <Sheet title={form === 'folder' ? '新建文件夹' : '重命名 / 移动'} close={() => setForm(undefined)}>{form === 'folder' && <p className="inline-note">创建位置：{rootNames[location.root]}{location.path ? '/' + location.path : ''}</p>}<label className="field">{form === 'folder' ? '文件夹名称' : `相对于「${rootNames[location.root]}」的目标路径`}<input autoFocus value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void submit(); }}/></label><button className="primary full" disabled={busy || !name.trim()} onClick={() => void submit()}><Check size={17}/>保存</button></Sheet>}
-    {view && <FileViewer entry={view} close={() => setView(undefined)} reference={() => reference(view)} toast={toast}/>}
+    {view && <FileViewer entry={view} close={() => setView(undefined)} reference={() => reference(view)} toast={toast} removed={() => { setEntries(list => list.filter(item => item.path !== view.path)); setView(undefined); setRefresh(v => v + 1); }}/>}
   </div>;
 }
-function FileViewer({ entry, close, reference, toast }: { entry: FileEntry; close: () => void; reference: () => void; toast: (s: string) => void }) {
+export function DeleteSheet({ entry, busy, close, confirm }: { entry: FileEntry; busy: boolean; close: () => void; confirm: () => void }) {
+  const kind = entry.directory ? '文件夹' : '文件';
+  return <Sheet title={'删除' + kind} close={close}><p className="inline-note">将从服务器永久删除「{entry.name}」{entry.directory ? '及其中的全部文件和子文件夹' : ''}，无法恢复。<br/>位置：{entry.path}</p><div className="interaction-actions"><button disabled={busy} onClick={close}>保留</button><button disabled={busy} className="primary danger" onClick={confirm}>{busy ? <LoaderCircle size={16} className="spin"/> : <Trash2 size={16}/>}确认删除</button></div></Sheet>;
+}
+export function FileViewer({ entry, close, reference, toast, removed, line }: { entry: FileEntry; close: () => void; reference: () => void; toast: (s: string) => void; removed?: () => void; line?: number }) {
   const rootNames = useRootNames();
-  const [url, setUrl] = useState(''), [text, setText] = useState(''), [modified, setModified] = useState(0), [error, setError] = useState(''), [editing, setEditing] = useState(false), [saved, setSaved] = useState('');
+  const [url, setUrl] = useState(''), [text, setText] = useState(''), [modified, setModified] = useState(0), [error, setError] = useState(''), [editing, setEditing] = useState(false), [saved, setSaved] = useState(''), [removing, setRemoving] = useState(false), [busy, setBusy] = useState(false);
+  const preview = useRef<HTMLPreElement>(null);
+  useEffect(() => { const node = preview.current, scroller = node?.parentElement; if (!line || !node || !scroller || !text) return; const height = parseFloat(getComputedStyle(node).lineHeight) || 18, top = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop; scroller.scrollTop = Math.max(0, top + (line - 3) * height); }, [line, text]);
+  async function remove() { setBusy(true); try { await post('/api/files/delete', { root: entry.root, path: entry.path }); toast('文件已删除'); setRemoving(false); (removed ?? close)(); } catch(e) { toast(String(e)); } finally { setBusy(false); } }
   const kind = entry.mime.startsWith('image') ? 'image' : entry.mime.startsWith('video') ? 'video' : entry.mime.startsWith('audio') ? 'audio' : entry.mime === 'text/html' ? 'html' : entry.mime === 'application/pdf' ? 'pdf' : 'text';
   useEffect(() => {
     let live = true;
@@ -85,7 +103,7 @@ function FileViewer({ entry, close, reference, toast }: { entry: FileEntry; clos
     try { const v = await api<{ modified: number }>('/api/files/text', { method: 'PUT', body: JSON.stringify({ ...entry, content: text, modified }) }); setModified(v.modified); setSaved(text); toast('已保存到服务器'); }
     catch(e) { toast(String(e)); }
   }
-  return <div className="viewer" role="dialog" aria-modal="true" aria-label={'预览 ' + entry.name}><header><button className="icon-button" aria-label="关闭预览" onClick={() => { if (text !== saved && !confirm('修改尚未保存，确定关闭？')) return; close(); }}><X size={21}/></button><div><strong>{entry.name}</strong><span>{bytes(entry.size)} · {rootNames[entry.root]} · 修改于 {modifiedLabel(modified || entry.modified)}</span></div><button className="icon-button" aria-label="下载文件" onClick={() => void downloadFile(entry.root, entry.path).catch(e => toast(e.message))}><ArrowDownToLine size={20}/></button></header><div className="viewer-actions"><button onClick={reference}><ArrowUpRight size={16}/>引用到对话</button>{['text', 'html'].includes(kind) && <button onClick={() => setEditing(!editing)}><Pencil size={16}/>{editing ? '预览' : '编辑源码'}</button>}{editing && <button disabled={text === saved} onClick={() => void save()}><Check size={16}/>保存修改</button>}</div><div className={'viewer-body ' + (kind === 'html' || editing ? 'fill' : '')}>
-      {error ? <div className="empty"><File size={35}/><p>{error}</p><button className="primary" onClick={() => void downloadFile(entry.root, entry.path)}>下载原文件</button></div> : editing ? <textarea aria-label="文件内容" className="code-editor" value={text} onChange={e => setText(e.target.value)} spellCheck={false}/> : !url ? <LoaderCircle className="spin"/> : kind === 'image' ? <img src={url} alt={entry.name}/> : kind === 'video' ? <video src={url} controls playsInline preload="metadata"/> : kind === 'audio' ? <div className="audio-player"><FileAudio size={70}/><h3>{entry.name}</h3><audio src={url} controls preload="metadata"/></div> : kind === 'html' || kind === 'pdf' ? <iframe title={entry.name} src={url} sandbox="allow-scripts allow-downloads"/> : /\.(md|markdown)$/i.test(entry.name) ? <ChatMarkdown document content={text} assetBase={url.slice(0, url.lastIndexOf('/') + 1)}/> : <pre className="text-preview">{text}</pre>}
-    </div></div>;
+  return <div className="viewer" role="dialog" aria-modal="true" aria-label={'预览 ' + entry.name}><header><button className="icon-button" aria-label="关闭预览" onClick={() => { if (text !== saved && !confirm('修改尚未保存，确定关闭？')) return; close(); }}><X size={21}/></button><div><strong>{entry.name}</strong><span>{bytes(entry.size)} · {rootNames[entry.root]} · 修改于 {modifiedLabel(modified || entry.modified)}</span></div><button className="icon-button" aria-label="下载文件" onClick={() => void downloadFile(entry.root, entry.path).catch(e => toast(e.message))}><ArrowDownToLine size={20}/></button></header><div className="viewer-actions"><button onClick={reference}><ArrowUpRight size={16}/>引用到对话</button>{['text', 'html'].includes(kind) && <button onClick={() => setEditing(!editing)}><Pencil size={16}/>{editing ? '预览' : '编辑源码'}</button>}{editing && <button disabled={text === saved} onClick={() => void save()}><Check size={16}/>保存修改</button>}{removed && <button className="danger-text" onClick={() => setRemoving(true)}><Trash2 size={16}/>删除</button>}</div><div className={'viewer-body ' + (kind === 'html' || editing ? 'fill' : '')}>
+      {error ? <div className="empty"><File size={35}/><p>{error}</p><button className="primary" onClick={() => void downloadFile(entry.root, entry.path)}>下载原文件</button></div> : editing ? <textarea aria-label="文件内容" className="code-editor" value={text} onChange={e => setText(e.target.value)} spellCheck={false}/> : !url ? <LoaderCircle className="spin"/> : kind === 'image' ? <img src={url} alt={entry.name}/> : kind === 'video' ? <video src={url} controls playsInline preload="metadata"/> : kind === 'audio' ? <div className="audio-player"><FileAudio size={70}/><h3>{entry.name}</h3><audio src={url} controls preload="metadata"/></div> : kind === 'html' || kind === 'pdf' ? <iframe title={entry.name} src={url} sandbox="allow-scripts allow-downloads"/> : /\.(md|markdown)$/i.test(entry.name) ? <ChatMarkdown document content={text} assetBase={url.slice(0, url.lastIndexOf('/') + 1)}/> : <pre ref={preview} className="text-preview">{text}</pre>}
+    </div>{removing && <DeleteSheet entry={entry} busy={busy} close={() => { if (!busy) setRemoving(false); }} confirm={() => void remove()}/>}</div>;
 }

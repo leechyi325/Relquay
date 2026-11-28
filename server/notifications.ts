@@ -38,7 +38,13 @@ export class NotificationStore {
     const keep = (item: Notice) => ['approval', 'question'].includes(item.type) && !item.resolvedAt || scope === 'read' && !item.readAt && !item.resolvedAt, before = this.state.items.length;
     this.state.items = this.state.items.filter(keep); this.persist(); return { removed: before - this.state.items.length, kept: this.state.items.length };
   }
-  private persist() { fs.writeFileSync(this.file + '.tmp', JSON.stringify(this.state), { mode: 0o600 }); fs.renameSync(this.file + '.tmp', this.file); }
+  private shown = '';
+  /** Called when the visible inbox changes (not for run bookkeeping), so connected apps can refresh it. */
+  onChange?: () => void;
+  private persist() {
+    fs.writeFileSync(this.file + '.tmp', JSON.stringify(this.state), { mode: 0o600 }); fs.renameSync(this.file + '.tmp', this.file);
+    const shown = JSON.stringify(this.state.items); if (shown !== this.shown) { this.shown = shown; this.onChange?.(); }
+  }
   begin(sessionId: string) {
     this.state.runs[sessionId] = { key: crypto.randomUUID(), active: true, startedAt: Date.now(), absent: 0 };
     const entries = Object.entries(this.state.runs); if (entries.length > 1000) { const old = entries.filter(([, run]) => !run.active).sort((a, b) => a[1].startedAt - b[1].startedAt)[0]; if (old) delete this.state.runs[old[0]]; }

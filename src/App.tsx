@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLive } from './live';
 import { Activity, BarChart3, Bell, ArrowRight, ArrowUpRight, Check, ChevronDown, ChevronRight, Clock3, Cpu, FolderOpen, GitBranch, HardDrive, Layers3, LoaderCircle, LogOut, MessageSquare, MoreHorizontal, Play, Plus, RefreshCw, Server, Settings2, ShieldCheck, Square, SquareTerminal } from 'lucide-react';
 import { api, cloud, isNative, origin, openManager, post, restoreToken, saveToken, setOrigin } from './api';
 import { UsagePanel } from './Usage';
@@ -9,7 +10,7 @@ import { AgentManager } from './AgentManager';
 import { Chat } from './Chat';
 import { BackgroundTasks, runningCount, type RunningSession } from './BackgroundTasks';
 import { useTheme } from './theme';
-import { FilesPage, Sheet, DownloadBar, bytes, modifiedLabel } from './Files';
+import { FilesPage, Sheet, DownloadBar, bytes, modifiedLabel, same } from './Files';
 import { Terminal } from './Terminal';
 import { NewSession, SessionActions } from './Sessions';
 import { appVersion, productName, productNameZh } from '../shared/config';
@@ -45,30 +46,38 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers, save
   const [authenticated, setAuthenticated] = useState(false), [restoring, setRestoring] = useState(true), [tab, setTab] = useState<Tab>('work'), [status, setStatus] = useState<ServerStatus>(), [conversations, setConversations] = useState<Conversation[]>([]), [jobs, setJobs] = useState<Job[]>([]), [current, setCurrent] = useState<Conversation>(), [provider, setProvider] = useState<Provider>('claude'), [location, setLocation] = useState<FileLocation>({ root: 'project', path: '' }), [cwd, setCwd] = useState<FileLocation>({ root: 'project', path: '' }), [settings, setSettings] = useState(false), [newSession, setNewSession] = useState(false), [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({}), [notice, setNotice] = useState(''), [error, setError] = useState(''), [reference, setReference] = useState<FileEntry>(), [refreshing, setRefreshing] = useState(false);
   const [usage, setUsage] = useState(false), [notifications, setNotifications] = useState(false), [background, setBackground] = useState(false), [running, setRunning] = useState<RunningSession[]>([]), [jobTarget, setJobTarget] = useState<string>();
   useEffect(() => { if (tab === 'terminal') setTerminalVisited(true); }, [tab]);
-  const inbox = useInbox(authenticated);
+  const live = useLive(authenticated, topics => { for (const topic of topics) { if (topic === 'notifications') void inbox.refresh(); else if (topic in loaders) void loaders[topic as keyof typeof loaders]().catch(() => {}); } });
+  const inbox = useInbox(authenticated, live);
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const toast = useCallback((message: string) => { setNotice(message); clearTimeout(timer.current); timer.current = setTimeout(() => setNotice(''), 5000); }, []);
   useEffect(() => { const expired = (event: Event) => { if ((event as CustomEvent<string>).detail === origin) { setAuthenticated(false); setCurrent(undefined); } }; const signedIn = (event: Event) => { if ((event as CustomEvent<string>).detail === origin) setAuthenticated(true); }; window.addEventListener('studio:unauthorized', expired); window.addEventListener('studio:login', signedIn); return () => { window.removeEventListener('studio:unauthorized', expired); window.removeEventListener('studio:login', signedIn); }; }, []);
   useEffect(() => { let live = true; void restoreToken().then(async token => { if (live && token) { await api('/api/me'); if (live) setAuthenticated(true); } }).catch(() => { if (live) void saveToken(''); }).finally(() => { if (live) setRestoring(false); }); return () => { live = false; }; }, []);
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    const results = await Promise.allSettled([
-      api<ServerStatus>('/api/status').then(setStatus),
-      cloud<{ conversations: Conversation[] }>('/providers/sessions/recent?limit=100').then(v => setConversations(v.conversations)),
-      api<Job[]>('/api/jobs').then(setJobs),
-      cloud<{ sessions: RunningSession[] }>('/providers/sessions/running').then(v => setRunning(v.sessions ?? [])),
-    ]);
+  // Background polling must not repaint the page: unchanged data keeps its identity, the spinner is only for
+  // refreshes the user asked for, and a single failed poll on a flaky mobile network does not flash a banner.
+  const failures = useRef(0);
+  const loaders = useMemo(() => ({
+    status: () => api<ServerStatus>('/api/status').then(value => setStatus(same(value))),
+    sessions: () => cloud<{ conversations: Conversation[] }>('/providers/sessions/recent?limit=100').then(v => setConversations(same(v.conversations))),
+    jobs: () => api<Job[]>('/api/jobs').then(value => setJobs(same(value))),
+    running: () => cloud<{ sessions: RunningSession[] }>('/providers/sessions/running').then(v => setRunning(same(v.sessions ?? []))),
+  }), []);
+  const refresh = useCallback(async (quiet = false) => {
+    if (!quiet) setRefreshing(true);
+    const results = await Promise.allSettled(Object.values(loaders).map(load => load()));
     const failure = results.find(v => v.status === 'rejected');
-    setError(failure?.status === 'rejected' ? String(failure.reason) : ''); setRefreshing(false);
-  }, []);
+    failures.current = failure ? failures.current + 1 : 0;
+    if (!failure) setError(''); else if (!quiet || failures.current > 1) setError(String(failure.reason));
+    if (!quiet) setRefreshing(false);
+  }, [loaders]);
+  // With server push connected, polling is only a slow safety net.
   useEffect(() => {
-    if (!authenticated) return; void refresh();
-    const interval = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh(); }, 12000);
-    const wake = () => { if (document.visibilityState === 'visible') void refresh(); };
+    if (!authenticated) return; void refresh(true);
+    const interval = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh(true); }, live ? 60000 : 12000);
+    const wake = () => { if (document.visibilityState === 'visible') void refresh(true); };
     document.addEventListener('visibilitychange', wake);
     return () => { clearInterval(interval); document.removeEventListener('visibilitychange', wake); };
-  }, [authenticated, refresh]);
+  }, [authenticated, refresh, live]);
   useEffect(() => {
     if (!isNative) return;
     let cleanup: (() => void) | undefined;
@@ -106,6 +115,7 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers, save
     return () => { live = false; };
   }, [authenticated, targetId]);
   function terminal(value: FileLocation) { setCwd(value); setTab('terminal'); }
+  const openFolder = useCallback((value: FileLocation) => { setLocation({ root: value.root, path: value.path }); setTab('files'); }, []);
   if (restoring) return <div className="launch"><img src="/brand.svg" alt={productName}/><span>正在连接工作台…</span></div>;
   if (!authenticated) return <Login profile={profile} manageServers={manageServers} saveProfile={saveProfile} done={() => setAuthenticated(true)}/>;
   return <FileRootsProvider><div className={"app-shell" + (current && tab === "work" ? " has-chat" : "")}>
@@ -113,7 +123,7 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers, save
     <main className={'main-content ' + (current && tab === 'work' ? 'chat-main' : '')}>
       <header className="top-bar"><button className="mobile-brand" onClick={() => { setCurrent(undefined); setTab('work'); }}><img src="/brand.svg" alt=""/><span>{productName}</span></button><div className="desktop-breadcrumb">工作空间 <ChevronRight size={13}/> <strong>{current && tab === 'work' ? current.sessionTitle : tabs.find(t => t.id === tab)?.label}</strong></div><div className="top-actions"><button aria-label="切换服务器" onClick={manageServers} className={'connection-pill server-switch ' + (status?.cloudcli ? 'online' : '')}><span className="dot"/>{profile.name}<ChevronDown size={12}/></button><button className="icon-button inbox-button" aria-label="后台任务" onClick={() => setBackground(true)}><Activity size={19}/>{runningCount(running) > 0 && <i>{runningCount(running)}</i>}</button><button className="icon-button inbox-button" aria-label="打开提醒中心" onClick={() => setNotifications(true)}><Bell size={19}/>{!!inbox.page?.unread && <i>{inbox.page.unread > 99 ? '99+' : inbox.page.unread}</i>}</button><button className="avatar-button" aria-label="工作台设置" onClick={() => setSettings(true)}>RQ</button></div></header>
       {error && <div className="error-banner compact"><span>{error}</span><button onClick={() => void refresh()}>重试</button></div>}
-      {tab === 'work' && (current ? <Chat key={current.sessionId} conversation={current} back={() => { setCurrent(undefined); void refresh(); }} reference={reference} clearReference={() => setReference(undefined)} toast={toast} manage={() => setSessionActions(current)}/> : <div className="workspace-page">
+      {tab === 'work' && (current ? <Chat key={current.sessionId} conversation={current} back={() => { setCurrent(undefined); void refresh(); }} reference={reference} clearReference={() => setReference(undefined)} toast={toast} manage={() => setSessionActions(current)} openFolder={openFolder}/> : <div className="workspace-page">
         <div className="section-heading"><div><span className="eyebrow">YOUR REMOTE WORKSPACE</span><h1>工作，随时接续。</h1></div><button className="icon-button" aria-label="刷新工作台" onClick={() => void refresh()}><RefreshCw size={18} className={refreshing ? 'spin' : ''}/></button></div>
         <p className="muted workspace-subtitle">电脑不在身边，工作依然在线。</p>
         <section className="hero-card"><div className="hero-copy"><span className="hero-tag"><span className="dot"/> {productName.toUpperCase()}</span><h2>你的工作台，<br/>随时在场。</h2><p>连接 AI、文件与终端，继续手头的工作。</p><button onClick={() => setNewSession(true)}>开始新会话 <ArrowUpRight size={18}/></button></div><div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="art-frame frame-back"/><div className="art-frame frame-mid"/><div className="art-frame frame-front"><img className="art-brand" src="/brand.svg" alt=""/><div className="art-timeline"><span/><span/><span/></div></div><span className="art-caption">AI → CODE → ACTION</span><div className="spark spark-one">✧</div><div className="spark spark-two">+</div></div></section>
@@ -124,7 +134,7 @@ function Workspace({ profile, profiles, target, clearTarget, manageServers, save
         {conversations.length ? <div className="conversation-list">{projectGroups(conversations).map((group, index) => { const open = expandedProjects[group.key] ?? index === 0; return <section className="project-group" key={group.key}><button className="project-header" aria-expanded={open} onClick={() => setExpandedProjects(value => ({ ...value, [group.key]: !open }))}><FolderOpen size={17}/><span className="conversation-label"><strong>{group.name}</strong><small>{group.items.length} 个会话{group.path ? ' · ' + group.path : ''}</small></span>{open ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}</button>{open && group.items.map(c => <div className="conversation-row" key={c.sessionId}><button className="conversation-open" onClick={() => { setCurrent(c); setProvider(c.provider); }}><span className={'session-icon ' + c.provider}>{c.provider === 'claude' ? '✳' : <CodeMark/>}</span><span className="conversation-label"><strong>{c.sessionTitle}</strong><small>{providerNames[c.provider]}</small></span><span className="session-time">{c.lastActivity ? modifiedLabel(new Date(c.lastActivity).getTime()) : ''}</span><ChevronRight size={16}/></button><button className="icon-button" aria-label={"会话操作 " + c.sessionTitle} onClick={() => setSessionActions(c)}><MoreHorizontal size={19}/></button></div>)}</section>; })}</div> : <div className="empty recent-empty"><MessageSquare size={28}/><h3>从一个新会话开始。</h3><p>让 AI 帮你阅读项目、编写代码或执行任务。</p><button className="text-button" onClick={() => setNewSession(true)}>新建第一个会话 <ArrowRight size={16}/></button></div>}
         <div className="workspace-note"><ShieldCheck size={15}/><span>项目与任务，由你的服务器管理。</span></div>
       </div>)}
-      {tab === 'jobs' && <JobsPage target={jobTarget} clearTarget={() => setJobTarget(undefined)} jobs={jobs} refresh={refresh} toast={toast} openOutputs={() => { void api<{ id: string }[]>('/api/roots').then(roots => { setLocation({ root: roots.find(root => root.id === 'outputs')?.id ?? roots[0].id, path: '' }); setTab('files'); }).catch(e => toast(String(e))); }}/>}
+      {tab === 'jobs' && <JobsPage live={live} target={jobTarget} clearTarget={() => setJobTarget(undefined)} jobs={jobs} refresh={refresh} toast={toast} openOutputs={() => { void api<{ id: string }[]>('/api/roots').then(roots => { setLocation({ root: roots.find(root => root.id === 'outputs')?.id ?? roots[0].id, path: '' }); setTab('files'); }).catch(e => toast(String(e))); }}/>}
       {tab === 'files' && <FilesPage location={location} setLocation={setLocation} terminal={terminal} reference={entry => { setReference(entry); setTab('work'); if (!current) setNewSession(true); }} toast={toast}/>}
       {(terminalVisited || tab === 'terminal') && <div className="terminal-container" hidden={tab !== 'terminal'}><Terminal active={tab === 'terminal'} cwd={cwd} status={status} toast={toast}/></div>}
     </main>
@@ -167,13 +177,15 @@ function Login({ done, profile, manageServers, saveProfile }: { done: () => void
   }
   return <div className="login-page"><div className="login-brand"><img src="/brand.svg" alt={`${productName} 标识`}/><strong>{productName}<span>{productNameZh}</span></strong></div><div className="login-card"><span className="eyebrow">YOUR WORKSPACE, ANYWHERE.</span><h1>工作不必等。<br/><span>工作台，随身带。</span></h1><p className="muted">连接你的服务器，继续手头的工作。</p><button className="login-server-button" onClick={manageServers}><Server size={17}/>{profile.name}<ChevronDown size={16}/></button><form onSubmit={e => void login(e)}><label className="field">服务器地址<div className="input-icon"><Server size={17}/><input type="url" autoCapitalize="none" autoCorrect="off" value={address} onChange={e => setAddress(e.target.value)} placeholder="https://你的服务器地址" required/></div></label><label className="field">工作台账号<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required/></label><label className="field">密码<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入工作台密码" required/></label>{error && <div className="error-banner" role="alert">{error}</div>}<button className="primary full" disabled={busy}>{busy ? <LoaderCircle size={18} className="spin"/> : <ArrowRight size={18}/>} {busy ? '正在连接…' : '进入工作台'}</button></form><div className="login-security"><ShieldCheck size={14}/>加密连接 · 每台服务器独立登录</div></div><footer>AI、终端与文件，随时掌握。</footer></div>;
 }
-function JobsPage({ jobs, refresh, toast, openOutputs, target, clearTarget }: { target?: string; clearTarget: () => void; jobs: Job[]; refresh: () => Promise<void>; toast: (s: string) => void; openOutputs: () => void }) {
+function JobsPage({ jobs, refresh, toast, openOutputs, target, clearTarget, live }: { live: boolean; target?: string; clearTarget: () => void; jobs: Job[]; refresh: (quiet?: boolean) => Promise<void>; toast: (s: string) => void; openOutputs: () => void }) {
   const { roots } = useFileModules();
   const [editing, setEditing] = useState<Job>(), [deleting, setDeleting] = useState(false);
   const [filter, setFilter] = useState('all'), [selected, setSelected] = useState<Job>(), [log, setLog] = useState(''), [create, setCreate] = useState(false), [title, setTitle] = useState(''), [command, setCommand] = useState(''), [busy, setBusy] = useState(false);
   useEffect(() => { if (!target) return; const job = jobs.find(job => job.id === target); if (job) { setSelected(job); setLog(''); } else toast('任务已移除或过期'); clearTarget(); }, [target, jobs]);
-  useEffect(() => { if (!selected) return; let active = true; const load = () => void api<{ log: string }>(`/api/jobs/${selected.id}/log`).then(v => { if (active) setLog(v.log); }).catch(e => toast(String(e))); load(); const t = setInterval(load, 2000); return () => { active = false; clearInterval(t); }; }, [selected?.id]);
-  useEffect(() => { const t = setInterval(() => void refresh(), 4000); return () => clearInterval(t); }, [refresh]);
+  const selectedStatus = jobs.find(job => job.id === selected?.id)?.status ?? selected?.status;
+  // Logs stream while a job is active; a finished job's log is read once more when its status changes.
+  useEffect(() => { if (!selected) return; let active = true; const load = () => void api<{ log: string }>(`/api/jobs/${selected.id}/log`).then(v => { if (active) setLog(same(v.log)); }).catch(e => toast(String(e))); load(); const t = ['running', 'queued', 'cancelling'].includes(selectedStatus ?? '') ? setInterval(load, 2000) : undefined; return () => { active = false; clearInterval(t); }; }, [selected?.id, selectedStatus]);
+  useEffect(() => { if (live) return; const t = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh(true); }, 4000); return () => clearInterval(t); }, [refresh, live]);
   async function submit() {
     if (editing) {
       setBusy(true);

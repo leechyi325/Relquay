@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bell, BellRing, Check, CheckCheck, ChevronRight, CircleAlert, Clock3, MessageSquare, Pause, RefreshCw, Settings2, ShieldCheck, Trash2, X } from 'lucide-react';
 import { api, isNative, post } from './api';
-import { Sheet } from './Files';
+import { Sheet, same } from './Files';
 import { nativeNotices, type MonitorStatus } from './native-notices';
 import type { Notice, NoticePage } from '../shared/notifications';
 import type { ServerProfile } from '../shared/servers';
-export function useInbox(enabled: boolean) {
+export function useInbox(enabled: boolean, live = false) {
   const [page, setPage] = useState<NoticePage>(), [error, setError] = useState('');
-  const refresh = useCallback(async () => { try { const page = await api<NoticePage>('/api/notifications'); setPage(page); setError(''); } catch(e) { setError(String(e)); } }, []);
+  const refresh = useCallback(async () => { try { const page = await api<NoticePage>('/api/notifications'); setPage(same(page)); setError(''); } catch(e) { setError(String(e)); } }, []);
   useEffect(() => {
     if (!enabled) return; void refresh();
-    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh(); }, 8000);
+    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh(); }, live ? 60000 : 8000);
     const wake = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', wake); return () => { clearInterval(timer); document.removeEventListener('visibilitychange', wake); };
-  }, [enabled, refresh]);
+  }, [enabled, refresh, live]);
   return { page, error, refresh };
 }
 export function Notifications({ inbox, profiles, close, open, toast }: { inbox: ReturnType<typeof useInbox>; profiles: ServerProfile[]; close: () => void; open: (notice: Notice) => Promise<void>; toast: (text: string) => void }) {

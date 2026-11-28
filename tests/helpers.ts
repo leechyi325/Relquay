@@ -63,6 +63,8 @@ export async function fixture(port = 0) {
       const sessionId = input.sessionId; replay.set(sessionId, []); subscribers.get(client)!.add(sessionId);
       if (input.content.includes('UI_APPROVAL')) publish(sessionId, { kind: 'permission_request', requestId: 'ui-approval', toolName: 'Bash', input: { command: 'npm run build', cwd: '/workspace/demo', description: '运行构建，核对页面修改' } });
       else if (input.content.includes('UI_QUESTION')) publish(sessionId, { kind: 'permission_request', requestId: 'ui-question', toolName: 'AskUserQuestion', input: { questions: [{ header: '实现方式', question: '希望优先实现哪些入口？', multiSelect: true, options: [{ label: '文件', description: '优先完成文件管理' }, { label: '终端', description: '优先完成触屏终端' }] }] } });
+      else if (input.content.includes('UI_SLOW')) { publish(sessionId, { kind: 'status', content: '正在处理较长任务' }); setTimeout(() => { publish(sessionId, { kind: 'text', role: 'assistant', content: '较长任务已完成。' }); publish(sessionId, { kind: 'complete' }); }, 3000); }
+      else if (input.content.includes('UI_FILES')) { publish(sessionId, { kind: 'text', itemId: 'ui-files', role: 'assistant', content: '已更新 [说明文档](../../README.md:3) 和 `../../example.js:2`，上级目录 `../`，命令 `npm run build` 保持原样。' }); publish(sessionId, { kind: 'complete' }); }
       else if (input.content.includes('UI_MARKDOWN')) {
         publish(sessionId, { kind: 'thinking', itemId: 'ui-thought', mode: 'delta', channel: 'summary', content: '开头完整保留。\n\n' });
         publish(sessionId, { kind: 'status', content: '正在核对' });

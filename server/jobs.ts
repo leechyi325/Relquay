@@ -21,7 +21,10 @@ export class Jobs {
     const dest = path.join(this.stateDir, 'jobs.json');
     fs.writeFileSync(dest + '.tmp', JSON.stringify(this.records), { mode: 0o600 });
     fs.renameSync(dest + '.tmp', dest);
+    this.onChange?.();
   }
+  /** Called after every persisted change, so connected apps can refresh the job list. */
+  onChange?: () => void;
   async add(title: string, command: string, cwd: FileLocation) {
     await this.files.resolve(cwd);
     if (this.records.filter(j => ['running', 'queued', 'cancelling'].includes(j.status)).length >= 30) throw new HttpError(429, '任务队列已满');

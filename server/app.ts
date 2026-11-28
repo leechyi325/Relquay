@@ -21,6 +21,7 @@ import { AgentConfigs } from './agent-config.ts';
 import { Jobs } from './jobs.ts';
 import { CodexBridge } from './codex.ts';
 import { appVersion } from '../shared/config.ts';
+import { slimHistory } from './history.ts';
 import { UsageStore, ClaudeQuota, claudeTranscriptTotals } from './usage.ts';
 import { QuotaRefresher, quotaRefreshSchema, claudeSender } from './quota-refresh.ts';
 import { NotificationStore } from './notifications.ts';
@@ -29,6 +30,9 @@ import { claudeTokens } from '../shared/usage.ts';
 import { decodeEvent } from '../shared/protocol.ts';
 import { TerminalNegotiation } from './terminal.ts';
 import { cloudConversation, conversationId, conversationRename } from './conversations.ts';
+import { MessageQueue, type QueuedMessage } from './queue.ts';
+import type { ResolvedAttachment } from './attachments.ts';
+import type { ChatEvent } from '../shared/protocol.ts';
 
 const exec = promisify(execFile);
 type Config = { claudeCommand?: string; base: string; state: string; cloud: string; dist: string; origin: string; filebrowser?: string; envFile?: string; allowedDirectories?: string[]; cloudAssets?: string; clientOrigins?: string[]; codexCommand?: string; codexArgs?: string[]; claudeQuota?: ClaudeQuota; agentConfigs?: AgentConfigs; extensions?: Extensions };
@@ -44,7 +48,9 @@ export function createStudio(config: Config) {
   const modules = new FileModules(config.base, config.state, config.allowedDirectories);
   const extensions = config.extensions ?? new Extensions(config.state, agentConfigs, input => modules.directory(input));
   const files = new Files(config.base, id => modules.root(id)), jobs = new Jobs(path.join(config.state, 'jobs'), files, config.envFile, job => notices.job(job));
-  const codex = new CodexBridge(path.join(config.state, 'codex'), config.codexCommand ?? 'codex', config.codexArgs ?? ['app-server', '--listen', 'stdio://'], event => { notices.ingest(event, 'codex'); usage.ingest(event); });
+  // Set once the queue exists; the Codex bridge may replay interrupted runs while it is being constructed.
+  const hooks = { event: (_event: ChatEvent) => {} };
+  const codex = new CodexBridge(path.join(config.state, 'codex'), config.codexCommand ?? 'codex', config.codexArgs ?? ['app-server', '--listen', 'stdio://'], event => { notices.ingest(event, 'codex'); usage.ingest(event); hooks.event(event); });
   const attachments = new Attachments(path.join(config.state, 'attachments'), files, config.cloudAssets ?? path.join(os.homedir(), '.cloudcli/assets'));
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', 'loopback');
   const server = createServer(app), wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
@@ -55,7 +61,20 @@ export function createStudio(config: Config) {
   const markUsed = (id: string) => { if (drafts.delete(id)) saveDrafts(); };
   const sessionsFile = path.join(config.state, 'sessions.json');
   const sessions = new Map<string, LoginSession>(existsSync(sessionsFile) ? JSON.parse(readFileSync(sessionsFile, 'utf8')) : []);
-  const observer = new CloudObserver(config.cloud, () => [...sessions.values()].reverse().find(session => session.expires > Date.now())?.cloudToken, notices, id => codex.has(id), event => usage.ingest(event));
+  // Change hints pushed to connected apps; each app refetches only what changed instead of polling everything.
+  const eventClients = new Set<WebSocket>(), chatClients = new Set<WebSocket>();
+  let pendingTopics = new Set<string>(), topicTimer: NodeJS.Timeout | undefined;
+  const publish = (...topics: string[]) => {
+    for (const topic of topics) pendingTopics.add(topic);
+    topicTimer ??= setTimeout(() => {
+      topicTimer = undefined; const frame = JSON.stringify({ type: 'changed', topics: [...pendingTopics] }); pendingTopics = new Set();
+      for (const ws of eventClients) if (ws.readyState === WebSocket.OPEN) ws.send(frame);
+    }, 250);
+    topicTimer.unref();
+  };
+  jobs.onChange = () => publish('jobs'); notices.onChange = () => publish('notifications');
+  const cloudToken = () => [...sessions.values()].reverse().find(session => session.expires > Date.now())?.cloudToken;
+  const observer = new CloudObserver(config.cloud, cloudToken, notices, id => codex.has(id), event => { usage.ingest(event); hooks.event(event); }, () => publish('running', 'sessions'));
   const persistSessions = () => { writeFileSync(sessionsFile + '.tmp', JSON.stringify([...sessions]), { mode: 0o600 }); renameSync(sessionsFile + '.tmp', sessionsFile); };
   const socketOwners = new WeakMap<WebSocket, string>();
   const secretFile = path.join(config.state, 'preview.secret');
@@ -73,6 +92,41 @@ export function createStudio(config: Config) {
     next();
   });
   app.use(express.json({ limit: '3mb' }));
+  type SendOptions = { permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions'; model?: string; effort?: string; attachments?: unknown[] };
+  async function prepareClaude(sessionId: string, content: string, options: SendOptions, resolved: ResolvedAttachment[], token: string) {
+    const session = await cloud('/providers/sessions/' + sessionId, token);
+    if (session.data.provider !== 'claude') throw new HttpError(400, '该会话类型暂不支持，请在终端继续');
+    const models = cloudModels((await cloud('/providers/claude/models', token)).data, await claudeAliases(config.claudeCommand));
+    const selected = validateModel(models, options.model, options.effort);
+    const images = await attachments.claudeImages(resolved);
+    notices.begin(sessionId); observer.begin(sessionId);
+    return { type: 'chat.send', sessionId, content: withFileReferences(content, resolved), options: { permissionMode: options.permissionMode, model: options.model ?? selected?.id, effort: options.effort ?? 'default', attachments: images } };
+  }
+  async function dispatchQueued(sessionId: string, item: QueuedMessage) {
+    markUsed(sessionId);
+    const resolved = await attachments.resolve(item.options.attachments);
+    if (codex.has(sessionId)) { await codex.send(sessionId, item.content, item.options, resolved); return; }
+    const token = cloudToken(); if (!token) throw new Error('服务器上没有有效的登录，请在 App 中重新登录');
+    await observer.send(await prepareClaude(sessionId, item.content, item.options, resolved, token));
+  }
+  // A message is being prepared or was just forwarded: the agent may not report the run yet, but it is busy.
+  const starting = new Map<string, number>();
+  const claudeRunning = async (id: string) => {
+    const token = cloudToken(); if (!token) return true;
+    const running = await cloud('/providers/sessions/running', token);
+    return z.array(z.object({ sessionId: z.string() })).parse(running.data.sessions).some(value => value.sessionId === id);
+  };
+  const queue = new MessageQueue(config.state, async (id, item) => { starting.set(id, Date.now()); try { await dispatchQueued(id, item); } catch(e) { starting.delete(id); throw e; } }, async id => {
+    if (Date.now() - (starting.get(id) ?? 0) < 60000) return false;
+    return codex.has(id) ? !codex.busy(id) : !(await claudeRunning(id));
+  }, view => {
+    const frame = JSON.stringify({ kind: 'relquay_queue', ...view });
+    for (const ws of chatClients) if (ws.readyState === WebSocket.OPEN) ws.send(frame);
+  });
+  hooks.event = event => {
+    if (event.kind === 'complete') { if (event.sessionId) starting.delete(event.sessionId); void queue.completed(event); publish('running', 'sessions'); }
+    else if (event.kind === 'session_created' || event.kind === 'text' && event.role === 'user') publish('running', 'sessions');
+  };
   const asyncRoute = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { void fn(req, res).catch(next); };
   const cloud = async (endpoint: string, token?: string, init?: RequestInit) => {
     const response = await fetch(config.cloud + '/api' + endpoint, { ...init, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers }, signal: AbortSignal.timeout(30000) });
@@ -268,10 +322,15 @@ export function createStudio(config: Config) {
       catch(error) { if (!(error instanceof HttpError) || error.status !== 404) throw error; }
     }
     if (codex.has(id)) codex.remove(id);
-    res.json({ ok: true });
+    queue.forget(id); res.json({ ok: true });
   }));
+  const queueId = (req: Request) => codex.resolveId(conversationId.parse(req.params.id));
+  app.get('/api/conversations/:id/queue', (req, res, next) => { try { res.set('Cache-Control', 'no-store').json(queue.view(queueId(req))); } catch(e) { next(e); } });
+  app.post('/api/conversations/:id/queue', asyncRoute(async (req, res) => { const id = queueId(req); markUsed(id); res.status(201).json(await queue.add(id, req.body)); }));
+  app.delete('/api/conversations/:id/queue/:item', (req, res, next) => { try { queue.remove(queueId(req), String(req.params.item)); res.json({ ok: true }); } catch(e) { next(e); } });
+  app.post('/api/conversations/:id/queue/resume', asyncRoute(async (req, res) => res.json(await queue.resume(queueId(req)))));
   app.post('/api/socket-ticket', (req, res) => {
-    const channel = z.enum(['chat', 'terminal']).parse(req.body.channel), ticket = crypto.randomBytes(24).toString('base64url');
+    const channel = z.enum(['chat', 'terminal', 'events']).parse(req.body.channel), ticket = crypto.randomBytes(24).toString('base64url');
     for (const [key, value] of tickets) if (value.expires < Date.now()) tickets.delete(key);
     tickets.set(ticket, { channel, session: res.locals.session, expires: Date.now() + 30_000 }); res.json({ ticket });
   });
@@ -285,6 +344,7 @@ export function createStudio(config: Config) {
       res.json({ success: true, data: codex.history(history[1], limit, offset) }); return;
     }
     const data = await cloud(req.url, res.locals.session.cloudToken, { method: req.method, ...(req.method === 'GET' ? {} : { body: JSON.stringify(req.body) }) });
+    if (req.method === 'GET' && history && data.data) data.data = slimHistory(data.data);
     if (req.method === 'GET' && req.path === '/providers/sessions/recent' && Array.isArray(data.data?.conversations)) {
       data.data.conversations = recentConversations(data.data.conversations);
     }
@@ -325,6 +385,31 @@ export function createStudio(config: Config) {
     const loc = locationSchema.parse(req.body);
     if (!loc.path) throw new HttpError(400, '目录名不能为空');
     await fs.mkdir(await files.resolve(loc, true)); res.json({ ok: true });
+  }));
+  const realRoots = async () => (await Promise.all(modules.listRoots().map(async root => { try { return { id: root.id, real: await fs.realpath(root.path) }; } catch { return null; } }))).filter(root => root !== null);
+  const within = (parent: string, child: string) => child === parent || child.startsWith(parent + path.sep);
+  app.post('/api/files/delete', asyncRoute(async (req, res) => {
+    const loc = locationSchema.parse(req.body);
+    res.json(await files.remove(loc, async target => {
+      if ((await realRoots()).some(root => within(target, root.real))) throw new HttpError(409, '该文件夹包含已绑定的文件模块，请先在「管理模块」中移除');
+      for (const job of jobs.records.filter(job => ['queued', 'running', 'cancelling'].includes(job.status))) {
+        try { if (within(target, await fs.realpath(await files.resolve(job.cwd)))) throw new HttpError(409, '有排队或运行中的任务在使用该文件夹'); }
+        catch(e) { if (e instanceof HttpError && e.status === 409) throw e; }
+      }
+    }));
+  }));
+  // Maps a path mentioned in a conversation (absolute, ~/ or relative to the session folder) to a bound file root.
+  app.post('/api/files/locate', asyncRoute(async (req, res) => {
+    const body = z.object({ path: z.string().trim().min(1).max(4096), base: z.string().max(4096).optional() }).parse(req.body);
+    const missing = new HttpError(404, '找不到该文件，或它不在已绑定的文件模块中');
+    let input = body.path.replace(/^file:\/\/(localhost)?/i, '');
+    if (input === '~' || input.startsWith('~/')) input = path.join(os.homedir(), input.slice(1));
+    if (input.includes('\0')) throw missing;
+    if (!path.isAbsolute(input)) { if (!body.base || !path.isAbsolute(body.base)) throw missing; input = path.resolve(body.base, input); }
+    let real: string; try { real = await fs.realpath(input); } catch { throw missing; }
+    const root = (await realRoots()).filter(root => within(root.real, real)).sort((a, b) => b.real.length - a.real.length)[0];
+    if (!root) throw missing;
+    try { res.json(await files.entry({ root: root.id, path: path.relative(root.real, real).split(path.sep).join('/') })); } catch { throw missing; }
   }));
   app.post('/api/files/move', asyncRoute(async (req, res) => {
     const body = z.object({ from: locationSchema, to: locationSchema }).parse(req.body);
@@ -422,6 +507,16 @@ export function createStudio(config: Config) {
       if (!ticket || ticket.expires < Date.now() || !sessions.has(ticket.session.token) || url.pathname !== `/ws/${ticket.channel}`) throw new Error('Ticket');
       wss.handleUpgrade(req, socket, head, client => {
         socketOwners.set(client, ticket.session.token);
+        // Phones drop idle connections behind carrier NAT; a protocol ping keeps the path open and reaps dead sockets.
+        let alive = true; client.on('pong', () => { alive = true; });
+        const heartbeat = setInterval(() => { if (!alive) { client.terminate(); return; } alive = false; client.ping(); }, 25000); heartbeat.unref();
+        client.on('close', () => clearInterval(heartbeat));
+        if (ticket.channel === 'events') {
+          eventClients.add(client); client.on('close', () => eventClients.delete(client));
+          client.on('message', data => { try { if (JSON.parse(data.toString()).type === 'ping') client.send('{"type":"pong"}'); } catch { /* Clients only send pings. */ } });
+          client.send(JSON.stringify({ type: 'hello' })); return;
+        }
+        if (ticket.channel === 'chat') client.on('close', () => chatClients.delete(client));
         const upstream = new WebSocket(config.cloud.replace(/^http/, 'ws') + (ticket.channel === 'chat' ? '/ws' : '/shell'), { headers: { Authorization: `Bearer ${ticket.session.cloudToken}` }, maxPayload: 8 * 1024 * 1024 });
         const buffer: Buffer[] = [];
         const terminal = new TerminalNegotiation(data => { if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'input', data })); });
@@ -437,6 +532,10 @@ export function createStudio(config: Config) {
                 if (!message.data) return;
               }
             }
+            // Answered here so a resumed app can tell a live socket from a stale one without disturbing the session.
+            // Clients that understand gateway frames (message queue) say so; older apps never receive them.
+            if (ticket.channel === 'chat' && message.type === 'relquay.hello') { chatClients.add(client); return; }
+            if (ticket.channel === 'chat' && message.type === 'relquay.ping') { client.send(JSON.stringify({ kind: 'relquay_pong', id: message.id })); return; }
             if (message.type === 'chat.permission-response' && typeof message.requestId === 'string') interactionRequest = message.requestId;
             if (ticket.channel === 'chat') {
               if (message.type === 'chat.subscribe' && Array.isArray(message.sessions)) {
@@ -452,18 +551,12 @@ export function createStudio(config: Config) {
               } else if (message.type === 'chat.send') {
                 void (async () => {
                   const body = z.object({ sessionId: z.string().regex(/^[a-zA-Z0-9_-]+$/), content: z.string().min(1).max(200000), options: z.object({ permissionMode: z.enum(['default', 'acceptEdits', 'bypassPermissions']).default('default'), model: z.string().optional(), effort: z.string().optional(), attachments: z.array(z.unknown()).max(10).optional() }).default({ permissionMode: 'default' }) }).parse(message);
-                  markUsed(body.sessionId);
+                  markUsed(body.sessionId); starting.set(body.sessionId, Date.now());
                   const resolved = await attachments.resolve(body.options.attachments);
                   if (codex.has(body.sessionId)) { await codex.send(body.sessionId, body.content, body.options, resolved); return; }
-                  const session = await cloud('/providers/sessions/' + body.sessionId, ticket.session.cloudToken);
-                  if (session.data.provider !== 'claude') throw new HttpError(400, '该会话类型暂不支持，请在终端继续');
-                  const models = cloudModels((await cloud('/providers/claude/models', ticket.session.cloudToken)).data, await claudeAliases(config.claudeCommand));
-                  const selected = validateModel(models, body.options.model, body.options.effort);
-                  const images = await attachments.claudeImages(resolved);
-                  notices.begin(body.sessionId); observer.begin(body.sessionId);
-                  const prepared = { type: 'chat.send', sessionId: body.sessionId, content: withFileReferences(body.content, resolved), options: { permissionMode: body.options.permissionMode, model: body.options.model ?? selected?.id, effort: body.options.effort ?? 'default', attachments: images } };
+                  const prepared = await prepareClaude(body.sessionId, body.content, body.options, resolved, ticket.session.cloudToken);
                   if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify(prepared)); else if (buffer.length < 30) buffer.push(Buffer.from(JSON.stringify(prepared)));
-                })().catch(e => { if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ kind: 'protocol_error', sessionId: message.sessionId, content: String(e) })); });
+                })().catch(e => { starting.delete(String(message.sessionId)); if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ kind: 'protocol_error', sessionId: message.sessionId, content: String(e) })); });
                 return;
               } else if (codex.has(message.sessionId)) {
                 if (message.type === 'chat.abort') { void codex.abort(message.sessionId).catch(e => client.send(JSON.stringify({ kind: 'error', sessionId: message.sessionId, content: String(e) }))); return; }
@@ -485,7 +578,7 @@ export function createStudio(config: Config) {
               }
             } catch {}
           }
-          if (ticket.channel === 'chat') { try { const event = decodeEvent(JSON.parse(data.toString())); if (event && !codex.has(event.sessionId ?? '')) { notices.ingest(event, 'claude'); usage.ingest(event); if (event.sessionId && event.kind !== 'chat_subscribed') observer.watch(event.sessionId); } } catch {} }
+          if (ticket.channel === 'chat') { try { const event = decodeEvent(JSON.parse(data.toString())); if (event && !codex.has(event.sessionId ?? '')) { notices.ingest(event, 'claude'); usage.ingest(event); hooks.event(event); if (event.sessionId && event.kind !== 'chat_subscribed') observer.watch(event.sessionId); } } catch {} }
           if (client.readyState === WebSocket.OPEN) client.send(data.toString());
         });
         upstream.on('error', () => client.close(1011, 'CloudCLI 连接失败'));

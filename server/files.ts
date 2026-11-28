@@ -35,13 +35,22 @@ export class Files {
     const folder = await this.resolve(location);
     const items = await fs.readdir(folder, { withFileTypes: true });
     return (await Promise.all(items.filter(e => !e.name.startsWith('.')).map(async entry => {
-      const item = { root: location.root, path: path.posix.join(location.path, entry.name) };
-      try {
-        const checked = await this.resolve(item);
-        const stat = await fs.stat(checked);
-        return { ...item, name: entry.name, directory: stat.isDirectory(), size: stat.size, modified: stat.mtimeMs, mime: mime(entry.name) };
-      } catch { return null; }
+      try { return await this.entry({ root: location.root, path: path.posix.join(location.path, entry.name) }); } catch { return null; }
     }))).filter((e): e is FileEntry => e !== null).sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name, 'zh-CN'));
+  }
+  async entry(location: FileLocation): Promise<FileEntry> {
+    const stat = await fs.stat(await this.resolve(location)), name = path.posix.basename(location.path) || location.root;
+    return { root: location.root, path: location.path, name, directory: stat.isDirectory(), size: stat.size, modified: stat.mtimeMs, mime: mime(name) };
+  }
+  /** Deletes a file or a whole folder. `guard` receives the resolved path so callers can protect bound roots or busy folders. */
+  async remove(location: FileLocation, guard?: (target: string) => Promise<void> | void) {
+    const root = await fs.realpath(this.rootPath(location.root)), target = await this.resolve(location);
+    if (!location.path || target === root) throw new HttpError(400, '不能删除绑定的根目录');
+    const info = await fs.lstat(target);
+    await guard?.(info.isSymbolicLink() ? target : await fs.realpath(target));
+    // A symlink is removed as a link; its target is never touched.
+    await fs.rm(target, { recursive: info.isDirectory() && !info.isSymbolicLink() });
+    return { directory: info.isDirectory() };
   }
   async read(location: FileLocation) {
     const filename = await this.resolve(location), stat = await fs.stat(filename);

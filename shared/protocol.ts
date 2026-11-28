@@ -33,6 +33,9 @@ export function decodeEvent(value: unknown): ChatEvent | null {
   const decoded = eventSchema.safeParse(value);
   return decoded.success ? decoded.data : null;
 }
+// Gateway and broadcast frames that describe the session list or side channels, not the running turn.
+// They must neither add rows to the conversation nor flip it into “processing”.
+const passive = new Set(['session_upserted', 'loading_progress', 'scheduled_messages_changed', 'chat_steer_accepted', 'side_question', 'history_truncated', 'relquay_pong', 'relquay_queue']);
 export function reduceChat(state: ChatState, event: ChatEvent): ChatState {
   if (event.kind === 'chat_subscribed') {
     const permissions = Array.isArray(event.pendingPermissions)
@@ -40,6 +43,7 @@ export function reduceChat(state: ChatState, event: ChatEvent): ChatState {
     return { ...state, processing: event.isProcessing === true, permissions };
   }
   if (event.seq !== undefined && event.seq <= state.lastSeq) return state;
+  if (passive.has(event.kind)) return event.seq === undefined ? state : { ...state, lastSeq: event.seq };
   const next = { ...state, lastSeq: event.seq ?? state.lastSeq };
   switch (event.kind) {
     case 'permission_request':
@@ -59,13 +63,22 @@ export function reduceChat(state: ChatState, event: ChatEvent): ChatState {
       break;
     }
     case 'interaction_error': next.error = String(event.content ?? '回应未被接受'); break;
-    default: if (event.kind !== 'session_upserted' && event.kind !== 'loading_progress') next.processing = true;
+    default: next.processing = true;
   }
-  if (event.kind !== 'session_upserted' && event.kind !== 'loading_progress') {
-    const optimistic = event.kind === 'text' && event.role === 'user' ? state.events.findIndex(e => e.optimistic === true) : -1;
-    next.events = optimistic >= 0 ? state.events.map((e, i) => i === optimistic ? event : e) : [...next.events, event];
-  }
+  const optimistic = event.kind === 'text' && event.role === 'user' ? state.events.findIndex(e => e.optimistic === true) : -1;
+  // The confirmed message keeps the optimistic row's render key, so it is updated in place instead of remounted.
+  next.events = optimistic >= 0 ? state.events.map((e, i) => i === optimistic ? { ...event, renderKey: e.renderKey ?? e.id } : e) : [...next.events, event];
   return next;
+}
+/**
+ * Replaces the newest page of a conversation with a fresh history page after a missed run end. Earlier pages
+ * the user loaded are kept when the fresh page overlaps them, unsent messages stay, and an empty page never
+ * wipes what is on screen. Returns undefined when nothing should change, and whether paging restarts.
+ */
+export function mergeLatestHistory(current: ChatEvent[], latest: ChatEvent[]): { events: ChatEvent[]; restarted: boolean } | undefined {
+  if (!latest.length) return undefined;
+  const first = latest.find(event => event.id)?.id, overlap = first ? current.findIndex(event => event.id === first) : -1;
+  return { events: [...(overlap > 0 ? current.slice(0, overlap) : []), ...latest, ...current.filter(event => event.optimistic === true)], restarted: overlap < 0 };
 }
 export type Job = {
   id: string; title: string; command: string; cwd: FileLocation; createdAt: string;
